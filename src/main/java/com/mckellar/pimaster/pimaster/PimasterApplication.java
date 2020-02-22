@@ -3,9 +3,12 @@ package com.mckellar.pimaster.pimaster;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +43,20 @@ public class PimasterApplication {
     	Log.info("I am at EchoId:"+id);
 
         return (id*2)+"";
+    }
+    
+    @RequestMapping("/eatarray")
+    String EchoId(@RequestBody List<Object> inList)  {
+    	Log.info("eatarray:"+inList.toString());
+
+        return inList.toString()+"";
+    }
+    
+    @RequestMapping("/eatmap")
+    String EchoId(@RequestBody Map<Object,Object> inList)  {
+    	Log.info("eatarray:"+inList.toString());
+
+        return inList.toString()+"";
     }
 
 }
