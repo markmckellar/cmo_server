@@ -1,6 +1,7 @@
 HELP.md
 .gradle
 build/
+local/
 #`gradlew
 #gradlew.bat
 #settings.gradle
