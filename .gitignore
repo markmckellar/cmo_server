@@ -4,6 +4,7 @@ build/
 gradlew
 gradlew.bat
 settings.gradle
+gradle/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**
 !**/src/test/**
