@@ -17,6 +17,8 @@ import com.mckellar.pimaster.piexp.fileioservice.FileStorageProperties;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageService;
 import com.mckellar.pimaster.piexp.fileioservice.UploadFileResponse;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -77,12 +79,20 @@ public class PimasterApplication {
     
     @PostMapping("/uploadfile")
     public UploadFileResponse uploadFile(@RequestParam("file") MultipartFile file) {
-        String fileName = fileStorageService.storeFile(file);
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
+        //String finalFileName = sdf.format(new Date())+"_"+fileName;
+        String saveFileName = sdf.format(new Date())+"_"+fileStorageService.getFileName(file);
+
+        String fileName = sdf.format(new Date())+"_"+fileStorageService.storeFile(file,saveFileName);
+       //SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
+        //String finalFileName = sdf.format(new Date())+"_"+fileName;
 
         String fileDownloadUri = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/downloadFile/")
                 .path(fileName)
                 .toUriString();
+
+        Log.info("uploadfile:finalFileName="+fileName);
 
         return new UploadFileResponse(fileName, fileDownloadUri,
                 file.getContentType(), file.getSize());

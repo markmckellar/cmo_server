@@ -2,7 +2,12 @@ package com.mckellar.pimaster.piexp.fileioservice;
 
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageException;
 import com.mckellar.pimaster.piexp.fileioservice.MyFileNotFoundException;
+
+
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageProperties;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -18,6 +23,7 @@ import java.nio.file.StandardCopyOption;
 
 @Service
 public class FileStorageService {
+    private static final Logger Log = LoggerFactory.getLogger(FileStorageService.class);
 
     private final Path fileStorageLocation;
 
@@ -32,10 +38,19 @@ public class FileStorageService {
             throw new FileStorageException("Could not create the directory where the uploaded files will be stored.", ex);
         }
     }
+    
+    public String getFileName(MultipartFile file) {
+    	return StringUtils.cleanPath(file.getOriginalFilename());
+    }
 
     public String storeFile(MultipartFile file) {
+    		return(storeFile(file,getFileName(file)));
+    }
+    public String storeFile(MultipartFile file,String fileName) {
         // Normalize file name
-        String fileName = StringUtils.cleanPath(file.getOriginalFilename());
+        //String fileName = StringUtils.cleanPath(file.getOriginalFilename());
+        
+        Log.info("fileName="+fileName);
 
         try {
             // Check if the file's name contains invalid characters
