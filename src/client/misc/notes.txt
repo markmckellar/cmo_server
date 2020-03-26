@@ -1,0 +1,76 @@
+# from https://linuxize.com/post/how-to-install-xrdp-on-raspberry-pi/
+# forRPD
+sudo apt update
+sudo apt-get install raspberrypi-ui-mods xinit xserver-xorg
+sudo reboot
+
+
+sudo apt install xrdp 
+systemctl show -p SubState --value xrdp
+sudo adduser xrdp ssl-cert 
+
+
+
+# FOR openCV python
+sudo apt-get update
+sudo apt-get upgrade
+sudo rpi-update
+
+sudo apt-get install build-essential cmake pkg-conf
+
+sudo apt-get install libjpeg8-dev libtiff4-dev libjasper-dev libpng12-dev
+
+sudo apt-get install libgtk2.0-dev
+
+sudo apt-get install libavcodec-dev libavformat-dev libswscale-dev libv4l-dev
+
+sudo apt-get install libatlas-base-dev gfortran
+
+wget https://bootstrap.pypa.io/get-pip.py
+sudo python get-pip.py
+
+
+wget https://bootstrap.pypa.io/get-pip.py
+sudo python get-pip.py
+
+
+
+# from mhttps://www.freecodecamp.org/news/the-easy-way-to-set-up-docker-on-a-raspberry-pi-7d24ced073ef/
+# for docker
+curl -fsSL get.docker.com -o get-docker.sh && sh get-docker.sh
+sudo groupadd docker
+sudo gpasswd -a $USER docker
+docker run hello-world
+
+
+# opencv docker 
+####docker pull ajeetraina/opencv4-python3
+# https://hub.docker.com/r/mohaseeb/raspberrypi3-python-opencv/
+docker run -it --rm mohaseeb/raspberrypi3-python-opencv:4.1.0 python -c "import cv2; print(cv2.__version__)"
+
+
+
+
+FROM mohaseeb/raspberrypi3-python-opencv:latest
+RUN pip install --no-cache-dir \
+  imutils \
+COPY capture_motion.py capture_motion.py
+CMD ["python", "capture_motion.py"]
+
+
+....
+docker build -t my_opencv_app -f docker_file_name .
+
+docker run -it --rm  --device /dev/video0--name my_opencv_app_run my_opencv_app
+
+docker run -it --rm -v `pwd`/save_video.py:/save_video.py -v `pwd`:/videos --device /dev/video0 mohaseeb/raspberrypi3-python-opencv:4.1.0 python /save_video.py
+
+# this works 
+docker run -it --rm -v `pwd`/test_cv.py:/test_cv.py -v `pwd`:/videos --device /dev/video0 mohaseeb/raspberrypi3-python-opencv:4.1.0 python /test_cv.py
+
+xhost + 127.0.0.1
+docker run -e DISPLAY=host.docker.internal:0 -v /tmp/.X11-unix:/tmp/.X11-unix - it --rm -v `pwd`/test_cv.py:/test_cv.py -v `pwd`:/videos --device /dev/video0 mohaseeb/raspberrypi3-python-opencv:4.1.0 python /test_cv.py
+
+
+# run firefox with X11 forwarding and keep running until it quits
+docker run -e DISPLAY=host.docker.internal:0 jess/firefox

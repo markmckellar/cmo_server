@@ -1,15 +1,6 @@
 #!/usr/bin/python
 
-# ./pi_surveillance_testing2_from_change.py -c pi_surv_config.json -o /home/mdm/storage/proc_images
-
-# import the necessary packages
-#from pyimagesearch.tempimage import TempImage
-######from pyimagesearch2.keyclipwriter import KeyClipWriter
-#import dropbox
-#from picamera.array import PiRGBArray
-#from picamera import PiCamera
-#from twilio.rest import Client
-#from threading import Thread
+#python ./capture_motion.py -c pi_surv_config.json -o /home/mdm/storage/proc_images
 import argparse
 import warnings
 import datetime
@@ -41,39 +32,11 @@ warnings.filterwarnings("ignore")
 conf = json.load(open(args["conf"]))
 client = None
 
-
-# initialize the camera and grab a reference to the raw camera capture
-#camera = PiCamera()
-#camera.resolution = tuple(conf["resolution"])
-#camera.framerate = conf["fps"]
-#rawCapture = PiRGBArray(camera, size=tuple(conf["resolution"]))
- 
-# allow the camera to warmup, then initialize the average frame, last
-# uploaded timestamp, and frame motion counter
-
-#dbx = dropbox.Dropbox("DROPBOX_KEY")
-
-#time.sleep(conf["camera_warmup_time"])
 avg = None
 lastUploaded = datetime.datetime.now()
 consecFrames = 0
 motionCounter = 0
 
-#import telegram
-#camera.capture('/home/pi/Desktop/image.jpg')
-#camera.stop_preview()
-#bot = telegram.Bot(token='TELEGRAM_API_KEY')
-#bot.send_message(chat_id=-MYCHAT, text="Security Camera is ON. A preview is below.")
-#bot.send_photo(chat_id=-MYCHAT, photo=open('/home/pi/Desktop/image.jpg', 'rb'))
-
-
-
-relevant_path ='/home/mdm/dev/workspaces/eclipse_2019_09/piexp_git/local/uploads/'
-included_extensions = ['jpg','jpeg', 'bmp', 'png', 'gif']
-file_names = [fn for fn in os.listdir(relevant_path)
-              if any(fn.endswith(ext) for ext in included_extensions)]
-
-file_names.sort()
 max_iamge_buffer  = 50
 # capture frames from the camera
 #for f in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
@@ -81,12 +44,18 @@ average_files_window = []
 counter = 0
 not_occupied_counter = 0
 occupied_counter = 0
-for file_name in file_names: 
-	full_file_name = relevant_path+file_name
-	file_size = (os.path.getsize(full_file_name))
+cam = cv2.VideoCapture(0)
+mirror = False
+file_name = "cam"
+while(True):
+    ret_val, frame = cam.read()
+    if mirror: frame = cv2.flip(frame, 1) 
+	#full_file_name = relevant_path+file_name
+	#file_size = (os.path.getsize(full_file_name))
 
 	# resize the frame, convert it to grayscale, and blur it
-	frame = cv2.imread(full_file_name)
+	#frame = cv2.imread(full_file_name)
+    if(True) :
         # grab the raw NumPy array representing the image and initialize
         # the timestamp and occupied/unoccupied text
         #frame = f.array
@@ -122,19 +91,6 @@ for file_name in file_names:
         avg_gray = cv2.GaussianBlur(avg_gray, (21, 21), 0)
         avg = avg_gray.copy().astype("float")
 
-        # if the average frame is None, initialize it
-        # if avg is None     
-        #         gray.copy()
-        #         avg = gray.copy().astype("float")
-        #         ################rawCapture.truncate(0)
-        #         continue
- 
-        # average_files_window.append(frame_copy)
-        # if(len(average_files_window)>max_iamge_buffer): del average_files_window[0]
-
-        # accumulate the weighted average between the current frame and
-        # previous frames, then compute the difference between the current
-        # frame and running average
         cv2.accumulateWeighted(gray, avg, 0.5)
         frameDelta = cv2.absdiff(gray, cv2.convertScaleAbs(avg))
         # threshold the delta image, dilate the thresholded image to fill
@@ -144,9 +100,8 @@ for file_name in file_names:
         thresh = cv2.dilate(thresh, None, iterations=2)
         import imutils
         cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        print("*********if imutils.is_cv2()="+ str(imutils.is_cv2()))
         cnts = cnts[0] if imutils.is_cv2() else cnts[1]
-        #(cnts, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
          
         # loop over the contours
         for c in cnts:
@@ -169,15 +124,13 @@ for file_name in file_names:
         updateConsecFrames = True
         # check to see if the room is occupied
 
-    
-
         im_v = cv2.hconcat([frame, avearage_past])
         #im_v = cv2.hconcat([gray,avg_gray])
 
         #all_past = cv2.hconcat(average_files_window)
 
-        cv2.imshow('image',im_v)
-        cv2.waitKey(100)
+        ##cv2.imshow('image',im_v)
+        ##cv2.waitKey(100)
         
         #cv2.destroyAllWindows()
         status = "0"
@@ -192,7 +145,7 @@ for file_name in file_names:
                 average_files_window.append(frame_copy)
                 if(len(average_files_window)>max_iamge_buffer): del average_files_window[0]
 
-        print("working on "+full_file_name+" size is "+str(file_size)+" elemnt "+str(counter)+" status="+status+" avg files="+str( len(average_files_window) ) +
+        print(text+":working on elemnt "+str(counter)+" status="+status+" avg files="+str( len(average_files_window) ) +
                 " not_occupied_counter="+str(not_occupied_counter)+
                 " max_iamge_buffer="+str(max_iamge_buffer))#+" of "+len(file_names.size))
         if text != "Occupied" : occupied_counter = 0

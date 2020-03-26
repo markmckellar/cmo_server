@@ -26,11 +26,13 @@ public class FileStorageService {
     private static final Logger Log = LoggerFactory.getLogger(FileStorageService.class);
 
     private final Path fileStorageLocation;
+    private FileStorageProperties fileStorageProperties;
 
     @Autowired
     public FileStorageService(FileStorageProperties fileStorageProperties) {
         this.fileStorageLocation = Paths.get(fileStorageProperties.getUploadDir())
                 .toAbsolutePath().normalize();
+        this.setFileStorageProperties(fileStorageProperties);
 
         try {
             Files.createDirectories(this.fileStorageLocation);
@@ -45,6 +47,15 @@ public class FileStorageService {
 
     public String storeFile(MultipartFile file) {
     		return(storeFile(file,getFileName(file)));
+    }
+    
+    public void createSubDir(String dir) throws  FileStorageException{
+        Path targetLocation = this.fileStorageLocation.resolve(dir);
+        try {
+            Files.createDirectories(targetLocation);
+        } catch (Exception ex) {
+            throw new FileStorageException("Could not create the directory : "+targetLocation.toString(), ex);
+        }
     }
     public String storeFile(MultipartFile file,String fileName) {
         // Normalize file name
@@ -81,4 +92,12 @@ public class FileStorageService {
             throw new MyFileNotFoundException("File not found " + fileName, ex);
         }
     }
+
+	public FileStorageProperties getFileStorageProperties() {
+		return fileStorageProperties;
+	}
+
+	public void setFileStorageProperties(FileStorageProperties fileStorageProperties) {
+		this.fileStorageProperties = fileStorageProperties;
+	}
 }
