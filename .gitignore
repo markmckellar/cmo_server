@@ -35,3 +35,10 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# mvn stuff
+.mvn/
+bin/
+mvnw
+mvnw.cmd
+target/
