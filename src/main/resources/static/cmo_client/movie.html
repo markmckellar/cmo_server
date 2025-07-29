@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>movie</title>
+    <style>
+        video::-webkit-media-controls-panel {
+        width: 100%; /* Ensures the control panel spans the full video width */
+    }
+video {
+  
+  width: 100%;
+    height: auto; /* Maintains aspect ratio */
+    max-width: 100%; /* Ensures it doesn't exceed its natural size */
+    display: block; /* Removes any extra space below the video */
+}
+</style>
+</head>
+<body>
+
+    <div id="time_element" style="font-size: 70px;font-family: Arial">time</div>
+    
+    <video id="movie_element" playsinline controls>
+        <source src="" 
+        type="video/mp4">does not support tag</video>
+</body>
+
+<script defer>
+        // Get the current URL
+        const currentUrl = window.location.href;
+
+        // Create a URL object to easily parse query parameters
+        const url = new URL(currentUrl);
+
+        // Get a specific URL argument (e.g., 'param')
+        // If the URL is http://example.com?param=hello, this will get 'hello'
+        const moviePath = url.searchParams.get('movie_path');
+        const time = url.searchParams.get('time');
+
+        const timeElement = document.getElementById('time_element');
+        timeElement.textContent = time;
+
+        var videoElement = document.getElementById("movie_element");
+        videoElement.src = "http://173.255.215.223:9090"+moviePath;
+        videoElement.load();
+        // videoElement.play();
+    </script>
+</html>
