@@ -40,7 +40,8 @@ video {
         timeElement.textContent = time;
 
         var videoElement = document.getElementById("movie_element");
-        videoElement.src = "http://173.255.215.223:9090"+moviePath;
+        // the movie is on the server this page came from (production, or a test server)
+        videoElement.src = window.location.origin + moviePath;
         videoElement.load();
         // videoElement.play();
     </script>
