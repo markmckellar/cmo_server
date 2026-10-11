@@ -18,6 +18,12 @@
             --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
 
+        /* the classes below set display, which would otherwise override the hidden attribute: a hidden
+           .player_error (inset: 0) then lay invisibly over the whole page and took every tap */
+        [hidden] {
+            display: none !important;
+        }
+
         html, body {
             margin: 0;
             height: 100%;
@@ -98,10 +104,6 @@
             background: rgba(0, 0, 0, 0.6);
             -webkit-backdrop-filter: blur(8px);
             backdrop-filter: blur(8px);
-        }
-
-        .player_info[hidden] {
-            display: none;
         }
 
         .player_camera {
