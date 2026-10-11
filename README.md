@@ -94,6 +94,7 @@ Returns the `me_data.json` contents of events for one date, newest first.
 | `howMayRecords` | Max events to return |
 | `startRecord` | Number of event directories to skip (for paging) |
 | `minimumDuration` | Only return events whose `me_time` is greater than this (seconds) |
+| `brief` | Optional, default `false`. See [Large responses](#large-responses) |
 
 ```sh
 curl "http://localhost:9090/catcam/meeventgroup/pet_door/20200327?howMayRecords=20&startRecord=0&minimumDuration=0"
@@ -111,10 +112,30 @@ first.
 | `howMayRecords` | Max events to return |
 | `minimumDuration` | Only return events whose `me_time` is greater than this |
 | `before` | Optional. For the next page, pass the `me_name` of the last event received |
+| `brief` | Optional, default `false`. See [Large responses](#large-responses) |
 
 ```sh
 curl "http://localhost:9090/catcam/search/pet_door?label=cat&howMayRecords=20&minimumDuration=0"
 curl "http://localhost:9090/catcam/search/pet_door?label=cat&howMayRecords=20&minimumDuration=0&before=20200326_234655_0310"
+```
+
+#### Large responses
+
+Both event list endpoints return each event's whole `me_data.json`. That's about 80KB
+per event, mostly `me_delta_array`, and the server builds the whole response in memory.
+Asking for thousands of events at once has run the server out of memory and hung it.
+To prevent that:
+
+- `howMayRecords` is capped at 200. Page through more with `startRecord` or `before`.
+- Only 4 of these requests run at once. Others wait up to 10 seconds and then get
+  `503 Service Unavailable`.
+- `brief=true` replaces `me_delta_array` with `me_delta_count`, `me_first_event_time`
+  and `me_last_event_time`. Use it when you only need event names or a summary.
+
+```sh
+curl "http://localhost:9090/catcam/search/pet_door?label=cat&howMayRecords=1&minimumDuration=0&brief=true"
+# [{"me_name": ..., "me_time": ..., "me_delta_count": <frames>,
+#   "me_first_event_time": <first event_time_iso>, "me_last_event_time": <last event_time_iso>, ...}]
 ```
 
 ### Downloading files

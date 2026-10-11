@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.lang.reflect.Type;
 
@@ -45,6 +47,8 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import javax.servlet.http.HttpServletRequest;
 
@@ -142,6 +146,51 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     }
 
     
+    // Each me_data.json is ~80KB, mostly me_delta_array, and the event lists build the
+    // whole response in memory. A big howMayRecords, or a pile of requests that clients
+    // have already given up on, can run the server out of heap. So cap the records per
+    // request and only let a few of these requests run at once.
+    private static final int MAX_RECORDS = 200;
+    private static final Semaphore eventListPermits = new Semaphore(4);
+
+    private int capRecords(int howMayRecords) {
+    	if(howMayRecords > MAX_RECORDS) {
+    		Log.warn("howMayRecords="+howMayRecords+" capped to "+MAX_RECORDS);
+    		return(MAX_RECORDS);
+    	}
+    	return(howMayRecords);
+    }
+
+    private void acquireEventListPermit() {
+    	try {
+    		if(eventListPermits.tryAcquire(10, TimeUnit.SECONDS)) return;
+    	}
+    	catch(InterruptedException e) {
+    		Thread.currentThread().interrupt();
+    	}
+    	Log.warn("too many event list requests at once, returning 503");
+    	throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "server busy, try again");
+    }
+
+    // brief=true: replace me_delta_array with me_delta_count, me_first_event_time and
+    // me_last_event_time, which is all the web client uses it for.
+    private MeEvent briefMeEvent(MeEvent meEvent) {
+    	Object deltas = meEvent.remove("me_delta_array");
+    	if(deltas instanceof List) {
+    		List<?> deltaList = (List<?>)deltas;
+    		meEvent.put("me_delta_count", deltaList.size());
+    		if(!deltaList.isEmpty()) {
+    			meEvent.put("me_first_event_time", eventTimeIso(deltaList.get(0)));
+    			meEvent.put("me_last_event_time", eventTimeIso(deltaList.get(deltaList.size()-1)));
+    		}
+    	}
+    	return(meEvent);
+    }
+
+    private Object eventTimeIso(Object delta) {
+    	return((delta instanceof Map) ? ((Map<?,?>)delta).get("event_time_iso") : null);
+    }
+
     @SuppressWarnings({ "unchecked", "rawtypes" })
 	@RequestMapping("/catcam/meeventgroup/{meGroup}/{meName}")
     public List<MeEvent> GetMeEvent(
@@ -150,9 +199,22 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		@RequestParam int howMayRecords,
     		@RequestParam int startRecord,
     		@RequestParam Double minimumDuration,
+    		@RequestParam(defaultValue = "false") boolean brief,
     		HttpServletRequest request) throws IOException  {
         Log.info("/catcam/meeventgroup");
+        howMayRecords = capRecords(howMayRecords);
+        acquireEventListPermit();
+        try {
+        	return(readMeEvents(meGroup, meName, howMayRecords, startRecord, minimumDuration, brief));
+        }
+        finally {
+        	eventListPermits.release();
+        }
+    }
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private List<MeEvent> readMeEvents(String meGroup, String meName, int howMayRecords,
+    		int startRecord, Double minimumDuration, boolean brief) throws IOException {
     	List<MeEvent> list = new ArrayList<MeEvent>();
     	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
     	File dir = new File(uploadDir+"/"+meGroup+"/"+meName);
@@ -191,7 +253,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 				MeEvent meEvent = gson.fromJson(json,type);
 				if(meEvent.hasMeTime())
 					if(meEvent.getMeTime()>minimumDuration)
-						list.add(meEvent);	
+						list.add(brief ? briefMeEvent(meEvent) : meEvent);
         	}
             catch(Exception e) {
                 Log.warn("error reading in json file="+jsonPath+" error="+e.getMessage());
@@ -230,9 +292,21 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		@RequestParam int howMayRecords,
     		@RequestParam Double minimumDuration,
     		@RequestParam(required = false) String before,
+    		@RequestParam(defaultValue = "false") boolean brief,
     		HttpServletRequest request) throws IOException  {
         Log.info("/catcam/search label="+label+" before="+before);
+        howMayRecords = capRecords(howMayRecords);
+        acquireEventListPermit();
+        try {
+        	return(searchMeEvents(meGroup, label, howMayRecords, minimumDuration, before, brief));
+        }
+        finally {
+        	eventListPermits.release();
+        }
+    }
 
+    private List<MeEvent> searchMeEvents(String meGroup, String label, int howMayRecords,
+    		Double minimumDuration, String before, boolean brief) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
     	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
     	File[] dateDirs = new File(uploadDir+"/"+meGroup).listFiles(File::isDirectory);
@@ -268,7 +342,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         			MeEvent meEvent = gson.fromJson(json,MeEvent.class);
         			if(meEvent.hasMeTime())
         				if(meEvent.getMeTime()>minimumDuration)
-        					list.add(meEvent);
+        					list.add(brief ? briefMeEvent(meEvent) : meEvent);
         		}
         		catch(Exception e) {
         			Log.warn("error reading in json file="+jsonPath+" error="+e.getMessage());
