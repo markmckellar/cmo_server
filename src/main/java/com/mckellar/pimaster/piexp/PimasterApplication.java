@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -15,7 +16,6 @@ import org.springframework.security.config.annotation.web.configuration.WebSecur
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,32 +23,29 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
-import java.lang.reflect.Type;
 
 import com.google.gson.Gson;
-import com.google.gson.stream.JsonReader;
 import com.google.gson.reflect.TypeToken;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageProperties;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageService;
 import com.mckellar.pimaster.piexp.fileioservice.UploadFileResponse;
 
-
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.text.SimpleDateFormat;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Date;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.servlet.http.HttpServletRequest;
 
@@ -61,8 +58,8 @@ import org.slf4j.LoggerFactory;
     FileStorageProperties.class
 })
 public class PimasterApplication extends WebSecurityConfigurerAdapter {
-	
-	
+
+
     private static final Logger Log = LoggerFactory.getLogger(PimasterApplication.class);
 
 
@@ -70,65 +67,26 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 	public static void main(String[] args) {
 		SpringApplication.run(PimasterApplication.class, args);
 	}
-	
-	
-	//@EnableWebSecurity
-	//public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 
 	@Override
 	protected void configure(HttpSecurity http) throws Exception {
 	    http.cors().configurationSource(request -> new CorsConfiguration().applyPermitDefaultValues());
 	    http.csrf().disable();
 	}
-	 
+
     @RequestMapping("/")
     String home() {
     	Log.info("I am at home");
         return "Hello, World!";
     }
-   
-    @RequestMapping("/hello2")
-    String heeeyyy() {
-    	Log.info("I am at heeeyyy");
 
-        return "Heeeeeeeeeeeeeeeey";
-    }
-    
-    @RequestMapping("/echotheid/{id}")
-    String EchoId(@PathVariable Long id)  {
-    	Log.info("I am at EchoId:"+id);
+    @Autowired
+    private FileStorageService fileStorageService;
 
-        return (id*2)+"";
-    }
-    
-    @PostMapping("/eatarray")
-    List<Object>  EchoId(@RequestBody List<Object> inList)  {
-    	Log.info("eatarray:"+inList.toString());
+    // set by the build (spring-boot-maven-plugin build-info); missing when run from an IDE
+    @Autowired(required = false)
+    private BuildProperties buildProperties;
 
-        return inList;
-    }
-    
-    @PostMapping("/eatmap")
-    Map<Object,Object> EchoId(@RequestBody Map<Object,Object> inMap)  {
-    	Log.info("eatarray:"+inMap.toString());
-
-        return inMap;
-    }
-    
-    
-    
-    class MotionEvent {
-    	public String movieName;
-    	public String movieUrl;
-    	public Map<Object,Object> eventData;
-    	
-    	public MotionEvent(String movieName,String movieUrl) {
-    		this.movieName = movieName;
-    		this.movieUrl = movieUrl;
-    		eventData = new HashMap<Object,Object>();
-    	}
-    }
-        
     class MeGroup {
       	public String meGroup;
 
@@ -136,7 +94,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		this.meGroup = meGroup;
     	}
     }
-    
+
     class MeEventGroup {
       	public String meEventGroup;
 
@@ -145,7 +103,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	}
     }
 
-    
+
     // Each me_data.json is ~80KB, mostly me_delta_array, and the event lists build the
     // whole response in memory. A big howMayRecords, or a pile of requests that clients
     // have already given up on, can run the server out of heap. So cap the records per
@@ -191,7 +149,64 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return((delta instanceof Map) ? ((Map<?,?>)delta).get("event_time_iso") : null);
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private final Gson gson = new Gson();
+
+    private Path uploadRoot() {
+    	return(new File(fileStorageService.getFileStorageProperties().getUploadDir()).toPath().toAbsolutePath().normalize());
+    }
+
+    // A folder under the uploads folder, from names in the URL. Refuses anything that would
+    // leave the uploads folder.
+    private File uploadDir(String... names) {
+    	Path root = uploadRoot();
+    	Path dir = root;
+    	for(String name : names) dir = dir.resolve(name);
+    	dir = dir.normalize();
+    	if(!dir.startsWith(root)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "bad path");
+    	return(dir.toFile());
+    }
+
+    // The folders in dir, by name, newest (largest) first. Empty if dir doesn't exist, so an
+    // unknown camera or date gives an empty list rather than an error.
+    private static List<File> subDirsNewestFirst(File dir) {
+    	File[] dirs = dir.listFiles(File::isDirectory);
+    	if(dirs == null) return(new ArrayList<File>());
+    	Arrays.sort(dirs, Comparator.comparing(File::getName).reversed());
+    	return(new ArrayList<File>(Arrays.asList(dirs)));
+    }
+
+    // An event's me_data.json, or null if it is missing or can't be read.
+    private MeEvent readMeData(File eventDir) {
+    	File jsonFile = new File(eventDir, "me_data.json");
+    	if(!jsonFile.isFile()) return(null);
+    	try {
+    		String json = Files.readString(jsonFile.toPath(), StandardCharsets.UTF_8);
+    		return(gson.fromJson(json, MeEvent.class));
+    	}
+    	catch(Exception e) {
+    		Log.warn("error reading in json file="+jsonFile.getPath()+" error="+e.getMessage());
+    		return(null);
+    	}
+    }
+
+    // An event's me_ollama.json, or null if it is missing or can't be read.
+    private Map<String,Object> readOllama(File eventDir) {
+    	File ollamaFile = new File(eventDir, "me_ollama.json");
+    	if(!ollamaFile.isFile()) return(null);
+    	try {
+    		String json = Files.readString(ollamaFile.toPath(), StandardCharsets.UTF_8);
+    		return(gson.fromJson(json, new TypeToken<Map<String,Object>>() {}.getType()));
+    	}
+    	catch(Exception e) {
+    		Log.warn("error reading in json file="+ollamaFile.getPath()+" error="+e.getMessage());
+    		return(null);
+    	}
+    }
+
+    private static boolean longEnough(MeEvent meEvent, Double minimumDuration) {
+    	return(meEvent != null && meEvent.hasMeTime() && meEvent.getMeTime() > minimumDuration);
+    }
+
 	@RequestMapping("/catcam/meeventgroup/{meGroup}/{meName}")
     public List<MeEvent> GetMeEvent(
     		@PathVariable String meGroup,
@@ -212,77 +227,27 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         }
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    // The events of one date, newest first. startRecord counts event folders, read or not.
     private List<MeEvent> readMeEvents(String meGroup, String meName, int howMayRecords,
-    		int startRecord, Double minimumDuration, boolean brief) throws IOException {
+    		int startRecord, Double minimumDuration, boolean brief) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
-    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
-    	File dir = new File(uploadDir+"/"+meGroup+"/"+meName);
+    	List<File> eventDirs = subDirsNewestFirst(uploadDir(meGroup, meName));
 
-        List<File> fileList = Arrays.asList(dir.listFiles());        
-        Collections.sort(fileList,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) {
-					 int v = ((File)o1).getName().compareTo(
-							 ((File)o2).getName() );				
-					 return v;           
-				 }
-			}
-        );
-        Collections.reverse(fileList);
-        
-        long startTime = System.nanoTime();       
-        for (int i=0;i<fileList.size();i++)
+        long startTime = System.nanoTime();
+        for (int i=startRecord;i<eventDirs.size();i++)
         {
         	// we got all we need :)
         	if(list.size()>=howMayRecords) break;
-        	// skip if we have not hit the start record
-        	if(i<startRecord) continue;
-
-        	File f = fileList.get(i);
-        	String jsonPath = f.getPath()+"/me_data.json";
-        	
-            Log.info("jsonPath="+jsonPath);
-
-            try {
-
-	        	String json = Files.readString(new File(jsonPath).toPath(), StandardCharsets.US_ASCII);
-	     		Gson gson = new Gson();
-				Type type = new TypeToken<MeEvent>() {}.getType();
-				MeEvent meEvent = gson.fromJson(json,type);
-				if(meEvent.hasMeTime())
-					if(meEvent.getMeTime()>minimumDuration)
-						list.add(brief ? briefMeEvent(meEvent) : meEvent);
-        	}
-            catch(Exception e) {
-                Log.warn("error reading in json file="+jsonPath+" error="+e.getMessage());
-
-            }
-
-
+        	MeEvent meEvent = readMeData(eventDirs.get(i));
+        	if(longEnough(meEvent, minimumDuration))
+        		list.add(brief ? briefMeEvent(meEvent) : meEvent);
         }
-        Collections.sort(list,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) 
-				 {
-				 int v = ((MeEvent)o1).getMeName().compareTo(
-						 ((MeEvent)o2).getMeName()
-						 );				
-				 return v;           
-				
-				     // it can also return 0, and 1
-				 }
-		        }
-        );
-        Collections.reverse(list);
         long elapsedTime = (System.nanoTime() - startTime)/1000000;
-        Log.info("GetMeEventGroups: " + uploadDir+":list="+list.size()+" elapsedTime="+elapsedTime);
+        Log.info("GetMeEventGroups: " + meGroup+"/"+meName+":list="+list.size()+" elapsedTime="+elapsedTime);
 
         return(list);
     }
-    
+
     // Search every date for events that ollama tagged with a label (cat, dog, person, ...), newest first.
     // For the next page pass the me_name of the last event received as "before".
 	@RequestMapping("/catcam/search/{meGroup}")
@@ -308,45 +273,28 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     private List<MeEvent> searchMeEvents(String meGroup, String label, int howMayRecords,
     		Double minimumDuration, String before, boolean brief) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
-    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
-    	File[] dateDirs = new File(uploadDir+"/"+meGroup).listFiles(File::isDirectory);
-    	if(dateDirs == null) return(list);
-    	Arrays.sort(dateDirs, Comparator.comparing(File::getName).reversed());
 
     	// event names start with their date (yyyyMMdd_...) so whole dates after "before" can be skipped
     	String beforeDate = (before != null && before.length() >= 8) ? before.substring(0,8) : null;
-    	Gson gson = new Gson();
     	int scanned = 0;
         long startTime = System.nanoTime();
 
-        for (File dateDir : dateDirs)
+        for (File dateDir : subDirsNewestFirst(uploadDir(meGroup)))
         {
         	if(list.size()>=howMayRecords) break;
         	if(beforeDate != null && dateDir.getName().compareTo(beforeDate) > 0) continue;
 
-        	File[] eventDirs = dateDir.listFiles(File::isDirectory);
-        	if(eventDirs == null) continue;
-        	Arrays.sort(eventDirs, Comparator.comparing(File::getName).reversed());
-
-        	for (File eventDir : eventDirs)
+        	for (File eventDir : subDirsNewestFirst(dateDir))
         	{
         		if(list.size()>=howMayRecords) break;
         		if(before != null && eventDir.getName().compareTo(before) >= 0) continue;
 
         		scanned++;
-        		if(!hasOllamaLabel(new File(eventDir,"me_ollama.json"),label,gson)) continue;
+        		if(!hasOllamaLabel(readOllama(eventDir),label)) continue;
 
-        		String jsonPath = eventDir.getPath()+"/me_data.json";
-        		try {
-        			String json = Files.readString(new File(jsonPath).toPath(), StandardCharsets.US_ASCII);
-        			MeEvent meEvent = gson.fromJson(json,MeEvent.class);
-        			if(meEvent.hasMeTime())
-        				if(meEvent.getMeTime()>minimumDuration)
-        					list.add(brief ? briefMeEvent(meEvent) : meEvent);
-        		}
-        		catch(Exception e) {
-        			Log.warn("error reading in json file="+jsonPath+" error="+e.getMessage());
-        		}
+        		MeEvent meEvent = readMeData(eventDir);
+        		if(longEnough(meEvent, minimumDuration))
+        			list.add(brief ? briefMeEvent(meEvent) : meEvent);
         	}
         }
 
@@ -357,293 +305,189 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     }
 
     // true if the event's me_ollama.json has the label (any case) set to true
-    private boolean hasOllamaLabel(File ollamaFile,String label,Gson gson) {
-    	if(!ollamaFile.exists()) return(false);
-    	try {
-    		String json = Files.readString(ollamaFile.toPath(), StandardCharsets.UTF_8);
-    		Map<String,Object> ollama = gson.fromJson(json, new TypeToken<Map<String,Object>>() {}.getType());
-    		for (Map.Entry<String,Object> entry : ollama.entrySet())
-    			if(entry.getKey().equalsIgnoreCase(label) && Boolean.TRUE.equals(entry.getValue()))
-    				return(true);
-    	}
-    	catch(Exception e) {
-    		Log.warn("error reading in json file="+ollamaFile.getPath()+" error="+e.getMessage());
-    	}
+    private static boolean hasOllamaLabel(Map<String,Object> ollama,String label) {
+    	if(ollama == null) return(false);
+    	for (Map.Entry<String,Object> entry : ollama.entrySet())
+    		if(entry.getKey().equalsIgnoreCase(label) && Boolean.TRUE.equals(entry.getValue()))
+    			return(true);
     	return(false);
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
 	@RequestMapping("/catcam/megroups")
     public List<MeGroup> GetMeGroups(HttpServletRequest request) throws IOException  {
         Log.info("/catcam/megroups");
 
     	List<MeGroup> list = new ArrayList<MeGroup>();
-    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
-    	File dir = new File(uploadDir);
+    	for (File f : subDirsNewestFirst(uploadRoot().toFile()))
+    		list.add(new MeGroup(f.getName()));
+    	Collections.reverse(list);    // A to Z
 
-        // list the files using our FileFilter
-        File[] files = dir.listFiles();
-
-        for (File f : files)
-        {
-        	MeGroup meGroup = new MeGroup(f.getName());
-			list.add(meGroup);
-        }
-        Collections.sort(list,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) 
-				 {
-				 int v = ((MeGroup)o1).meGroup.compareTo(
-						 ((MeGroup)o2).meGroup
-						 );				
-				 return v;           
-				
-				     // it can also return 0, and 1
-				 }
-		        }
-        );
-        //Collections.reverse(list);
-        
-        Log.info("GetMeGroups: " + uploadDir+":list="+list.size());
-
+        Log.info("GetMeGroups: list="+list.size());
         return(list);
     }
-    
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+
 	@RequestMapping("/catcam/meeventgroup/{meGroup}")
     public List<MeEventGroup> GetMeEventGroups(@PathVariable String meGroup,@RequestParam int howMayRecords,
     		HttpServletRequest request) throws IOException  {
         Log.info("/catcam/meeventgroup");
 
     	List<MeEventGroup> list = new ArrayList<MeEventGroup>();
-    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
-    	File dir = new File(uploadDir+"/"+meGroup);
-
-        // list the files using our FileFilter
-        List<File> fileList = Arrays.asList(dir.listFiles());        
-        Collections.sort(fileList,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) {
-					 int v = ((File)o1).getName().compareTo(
-							 ((File)o2).getName() );				
-					 return v;           
-				 }
-			}
-        );
-        Collections.reverse(fileList);
-        
-        
-        for (int i=0;i<fileList.size();i++)
-        {
+    	for (File f : subDirsNewestFirst(uploadDir(meGroup)))
+    	{
           	// we got all we need :)
         	if(list.size()>=howMayRecords) break;
-        	File f = fileList.get(i);
-        	MeEventGroup meEventGroup = new MeEventGroup(f.getName());
-			list.add(meEventGroup);
+        	list.add(new MeEventGroup(f.getName()));
         }
-        Collections.sort(list,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) 
-				 {
-				 int v = ((MeEventGroup)o1).meEventGroup.compareTo(
-						 ((MeEventGroup)o2).meEventGroup
-						 );				
-				 return v;           
-				
-				     // it can also return 0, and 1
-				 }
-		        }
-        );
-        Collections.reverse(list);
-        
-        Log.info("GetMeEventGroups: " + uploadDir+":list="+list.size());
 
+        Log.info("GetMeEventGroups: " + meGroup+":list="+list.size());
         return(list);
     }
-    
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-	@RequestMapping("/catcam/megroup/{me_group}")
-    public List<MotionEvent> GetCatCamMovies(@PathVariable String meGroup,HttpServletRequest request) throws IOException  {
-    	
-    	List<MotionEvent> movieList = new ArrayList<MotionEvent>();
-    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
-    	File dir = new File(uploadDir+"/"+meGroup);
 
-        // list the files using our FileFilter
-        File[] files = dir.listFiles();
+    // Everything about one event in one small response: its me_data.json (brief), me_ollama.json,
+    // the files it has, and whether it is complete (me_data.json and the movie and picture it names
+    // are all there). For checking that an upload fully landed.
+    @GetMapping("/catcam/event/{meGroup}/{meEventGroup}/{meName}")
+    public Map<String,Object> GetEvent(
+    		@PathVariable String meGroup,
+    		@PathVariable String meEventGroup,
+    		@PathVariable String meName) throws IOException {
+    	Log.info("/catcam/event/"+meGroup+"/"+meEventGroup+"/"+meName);
+    	File eventDir = uploadDir(meGroup, meEventGroup, meName);
+    	if(!eventDir.isDirectory()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such event");
 
-        for (File f : files)
-        {
-          //System.out.println("file: " + f.getName());
-          //Log.info("file: " + f.getName());
-        	String fileName = f.getName()+"/me_data.json";
-        	if(fileName.toLowerCase().endsWith(".json"))
-        	{
-        		String baseName = fileName.substring(0,fileName.length()-5);
-				MotionEvent me = new MotionEvent(
-					baseName,
-					  request.getRequestURL().toString().replace("movies","movie")+"/"+baseName+".mp4"
-				);
-				String json = Files.readString(f.toPath(), StandardCharsets.US_ASCII);
+    	Map<String,Long> files = new LinkedHashMap<String,Long>();
+    	Path base = eventDir.toPath();
+    	try (Stream<Path> walk = Files.walk(base)) {
+    		for (Path p : walk.filter(Files::isRegularFile).sorted().collect(Collectors.toList()))
+    			files.put(base.relativize(p).toString().replace(File.separatorChar, '/'), p.toFile().length());
+    	}
 
-				Gson gson = new Gson();
-				JsonReader reader = new JsonReader(new FileReader(f.getPath()));
-				Object data = gson.fromJson(reader, Object.class);
+    	MeEvent meData = readMeData(eventDir);
+    	boolean complete = meData != null;
+    	if(meData != null)
+    		for (String key : new String[] {"me_video_name", "me_rep_image"})
+    			if(meData.get(key) != null && !files.containsKey(meData.get(key).toString()))
+    				complete = false;
 
-				me.eventData.put("meData",data);
-				
-				movieList.add(me);
-			
-        	}
-        }
-        Collections.sort(movieList,
-        		new Comparator() {
-				
-				 public int compare(Object o1, Object o2) 
-				 {
-				 int v = ((MotionEvent)o1).movieName.compareTo(
-						 ((MotionEvent)o2).movieName
-						 );				
-				 return v;           
-				
-				     // it can also return 0, and 1
-				 }
-		        }
-        );
-        Collections.reverse(movieList);
-        
-        Log.info("uploadDir: " + uploadDir+":movieList="+movieList.size());
-
-        return(movieList);
+    	Map<String,Object> result = new LinkedHashMap<String,Object>();
+    	result.put("me_group", meGroup);
+    	result.put("me_event_group", meEventGroup);
+    	result.put("me_name", meName);
+    	result.put("complete", complete);
+    	result.put("files", files);
+    	result.put("me_ollama", readOllama(eventDir));
+    	result.put("me_data", meData == null ? null : briefMeEvent(meData));
+    	return(result);
     }
-    
-    @Autowired
-    private FileStorageService fileStorageService;
-    
-    
-    @PostMapping("/uploadfile")
-    public UploadFileResponse uploadFile(@RequestParam("file") MultipartFile file) {
-        Log.info("uploading a file starting...");
 
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
-        //String finalFileName = sdf.format(new Date())+"_"+fileName;
-        //String saveFileName = sdf.format(new Date())+"_"+fileStorageService.getFileName(file);
-        String saveFileName =fileStorageService.getFileName(file);
-
-        String fileName = sdf.format(new Date())+"_"+fileStorageService.storeFile(file,saveFileName);
-       //SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
-        //String finalFileName = sdf.format(new Date())+"_"+fileName;
-
-        Log.info("uploading a file:"+fileName);
-
-        String fileDownloadUri = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/downloadFile/")
-                .path(fileName)
-                .toUriString();
-
-        Log.info("uploadfile:finalFileName="+fileName);
-
-        return new UploadFileResponse(fileName, fileDownloadUri,
-                file.getContentType(), file.getSize());
+    // The newest events of one camera, or of every camera, across dates, newest first. Always brief,
+    // with each event's me_ollama.json added as "me_ollama".
+    @GetMapping({"/catcam/latest", "/catcam/latest/{meGroup}"})
+    public List<MeEvent> GetLatest(
+    		@PathVariable(required = false) String meGroup,
+    		@RequestParam(defaultValue = "10") int n) {
+    	Log.info("/catcam/latest group="+meGroup+" n="+n);
+    	n = capRecords(n);
+    	acquireEventListPermit();
+    	try {
+    		List<File> groups = (meGroup == null)
+    				? subDirsNewestFirst(uploadRoot().toFile())
+    				: Collections.singletonList(uploadDir(meGroup));
+    		List<MeEvent> list = new ArrayList<MeEvent>();
+    		for (File groupDir : groups)
+    			list.addAll(latestEvents(groupDir, n));
+    		// event names start with their date and time, so they sort across cameras too
+    		list.sort(Comparator.comparing((MeEvent e) -> String.valueOf(e.get("me_name"))).reversed());
+    		return(list.size() > n ? new ArrayList<MeEvent>(list.subList(0, n)) : list);
+    	}
+    	finally {
+    		eventListPermits.release();
+    	}
     }
-    
+
+    private List<MeEvent> latestEvents(File groupDir, int n) {
+    	List<MeEvent> list = new ArrayList<MeEvent>();
+    	for (File dateDir : subDirsNewestFirst(groupDir)) {
+    		for (File eventDir : subDirsNewestFirst(dateDir)) {
+    			if(list.size() >= n) return(list);
+    			MeEvent meEvent = readMeData(eventDir);
+    			if(meEvent == null) continue;
+    			briefMeEvent(meEvent);
+    			meEvent.put("me_ollama", readOllama(eventDir));
+    			list.add(meEvent);
+    		}
+    	}
+    	return(list);
+    }
+
+    // Is the server up, which build is it, where does it keep events, and the newest event per
+    // camera. Cheap: it lists folders and reads no event files.
+    @GetMapping("/catcam/health")
+    public Map<String,Object> GetHealth() {
+    	File root = uploadRoot().toFile();
+    	Map<String,Object> groups = new LinkedHashMap<String,Object>();
+    	List<File> groupDirs = subDirsNewestFirst(root);
+    	Collections.reverse(groupDirs);    // A to Z
+    	for (File groupDir : groupDirs) {
+    		List<File> dates = subDirsNewestFirst(groupDir);
+    		Map<String,Object> g = new LinkedHashMap<String,Object>();
+    		g.put("dates", dates.size());
+    		g.put("newest_date", dates.isEmpty() ? null : dates.get(0).getName());
+    		String newestEvent = null;
+    		for (File dateDir : dates) {
+    			List<File> events = subDirsNewestFirst(dateDir);
+    			if(!events.isEmpty()) { newestEvent = events.get(0).getName(); break; }
+    		}
+    		g.put("newest_event", newestEvent);
+    		groups.put(groupDir.getName(), g);
+    	}
+
+    	Map<String,Object> result = new LinkedHashMap<String,Object>();
+    	result.put("status", "ok");
+    	result.put("version", buildProperties == null ? null : buildProperties.getVersion());
+    	result.put("build_time", buildProperties == null || buildProperties.getTime() == null ? null : buildProperties.getTime().toString());
+    	result.put("upload_dir", root.getPath());
+    	result.put("free_bytes", root.getUsableSpace());
+    	result.put("total_bytes", root.getTotalSpace());
+    	result.put("groups", groups);
+    	return(result);
+    }
+
+    // Upload one file of an event. image_dir non-empty: the file goes in the event's images/ folder
+    // (old Pi clients send their frames this way).
     @PostMapping("/uploadme/{meGroup}/{meEventGroup}/{meName}")
     public UploadFileResponse uploadFile(@PathVariable String meGroup,
     		@PathVariable String meEventGroup,
     		@PathVariable String meName,
-    		@RequestParam("image_dir") String imageDir,
+    		@RequestParam(value = "image_dir", defaultValue = "") String imageDir,
     		@RequestParam("file") MultipartFile file) {
-        Log.info("uploading a file starting...");
+        String saveFileName = fileStorageService.getFileName(file);
+        String saveDir = meGroup+"/"+meEventGroup+"/"+meName+(imageDir.isEmpty() ? "" : "/images");
+        uploadDir(saveDir, saveFileName);    // refuses names that leave the uploads folder
+        fileStorageService.createSubDir(saveDir);
+        String fileName = fileStorageService.storeFile(file, saveDir+"/"+saveFileName);
 
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
-        //String finalFileName = sdf.format(new Date())+"_"+fileName;
-        //String saveFileName = sdf.format(new Date())+"_"+fileStorageService.getFileName(file);
-        String saveFileName =fileStorageService.getFileName(file);
-        
-        String saveDir = meGroup+"/"+meEventGroup+"/"+meName;
-        String saveDirIages = saveDir+"/images";
-        fileStorageService.createSubDir(saveDirIages);
-        
-        String storeFileName =
-        		(imageDir.isEmpty()) ?
-        				saveDir+"/"+saveFileName
-        				: saveDirIages+"/"+saveFileName;
-        String fileName = sdf.format(new Date())+"_"+fileStorageService.storeFile(file,storeFileName);
-        //fileName = meGroup+"/"+meEventGroup+"/"+meName+"/"+fileName;
-       //SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
-        //String finalFileName = sdf.format(new Date())+"_"+fileName;
-
-        Log.info("uploading a file:"+fileName);
+        Log.info("uploadme:fileName="+fileName);
 
         String fileDownloadUri = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/downloadFile/")
+                .path("/catcam/data/")
                 .path(fileName)
                 .toUriString();
-
-        Log.info("uploadfile:finalFileName="+fileName);
 
         return new UploadFileResponse(fileName, fileDownloadUri,
                 file.getContentType(), file.getSize());
     }
-    
-    
-    @GetMapping("/catcam/movie/{fileName:.+}")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String fileName, HttpServletRequest request) {
-        // Load file as Resource
-        Resource resource = fileStorageService.loadFileAsResource(fileName);
 
-        // Try to determine file's content type
-        String contentType = null;
-        try {
-            contentType = request.getServletContext().getMimeType(resource.getFile().getAbsolutePath());
-        } catch (IOException ex) {
-            Log.info("Could not determine file type.");
-        }
-
-        // Fallback to the default content type if type could not be determined
-        if(contentType == null) {
-            contentType = "application/octet-stream";
-        }
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(contentType))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
-                .body(resource);
-    }
-    // http://localhost:8080/catcam/data/pet_door/20200327/20200326_234655_0310/me_rep_image.jpg
-    
+    // http://localhost:9090/catcam/data/pet_door/20200327/20200326_234655_0310/me_rep_image.jpg
     @GetMapping("/catcam/data/{meGroup}/{meGroupName}/{meEventName}/{fileName:.+}")
     public ResponseEntity<Resource> downloadFile(
     		@PathVariable String meGroup,
     		@PathVariable String meGroupName,
     		@PathVariable String meEventName,
     		@PathVariable String fileName, HttpServletRequest request) {
-        // Load file as Resource
-		fileName = meGroup+"/"+meGroupName+"/"+meEventName+"/"+fileName;
-        Resource resource = fileStorageService.loadFileAsResource(fileName);
-
-        // Try to determine file's content type
-        String contentType = null;
-        try {
-            contentType = request.getServletContext().getMimeType(resource.getFile().getAbsolutePath());
-        } catch (IOException ex) {
-            Log.info("Could not determine file type.");
-        }
-
-        // Fallback to the default content type if type could not be determined
-        if(contentType == null) {
-            contentType = "application/octet-stream";
-        }
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(contentType))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
-                .body(resource);
+		return(serveFile(request, meGroup, meGroupName, meEventName, fileName));
     }
-    
+
     @GetMapping("/catcam/data/{meGroup}/{meGroupName}/{meEventName}/{imageDir}/{fileName:.+}")
     public ResponseEntity<Resource> downloadFile(
     		@PathVariable String meGroup,
@@ -651,9 +495,12 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		@PathVariable String meEventName,
     		@PathVariable String imageDir,
     		@PathVariable String fileName, HttpServletRequest request) {
-        // Load file as Resource
-		fileName = meGroup+"/"+meGroupName+"/"+meEventName+"/"+imageDir+"/"+fileName;
-        Resource resource = fileStorageService.loadFileAsResource(fileName);
+		return(serveFile(request, meGroup, meGroupName, meEventName, imageDir, fileName));
+    }
+
+    private ResponseEntity<Resource> serveFile(HttpServletRequest request, String... names) {
+    	uploadDir(names);    // refuses names that leave the uploads folder
+        Resource resource = fileStorageService.loadFileAsResource(String.join("/", names));
 
         // Try to determine file's content type
         String contentType = null;
@@ -673,6 +520,5 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
                 .body(resource);
     }
-      
-}
 
+}

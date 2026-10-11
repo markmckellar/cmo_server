@@ -1,7 +1,8 @@
 # cmo_server
 
-Server end for a network of Raspberry Pi motion cameras ("catcam"). The Pi clients
-(`src/client/`) record motion events and upload them here; the server stores them on
+Server end for the motion cameras ("catcam"): the pet door Pi
+([pet_cam](https://github.com/markmckellar/pet_cam)) and the porch camera
+([porch_cam](https://github.com/markmckellar/porch_cam)) record motion events and upload them here; the server stores them on
 disk and serves them, plus a web client (`src/main/resources/static/cmo_client/`), for
 browsing and searching events.
 
@@ -32,14 +33,14 @@ Settings live in `src/main/resources/application.properties`:
 | Property | Default | Notes |
 |---|---|---|
 | `server.port` | `9090` | |
-| `server.address` | `192.168.1.177` | Change to your host's IP, or remove to listen on all interfaces |
+| `server.address` | `0.0.0.0` | Every network interface. `127.0.0.1` keeps it to this machine |
 | `file.upload-dir` | `./local/uploads` | Where events are stored; created if missing |
 | `spring.servlet.multipart.max-file-size` | `200MB` | Max size of a single upload |
 
 Any property can be overridden at launch without rebuilding, e.g.:
 
 ```sh
-java -jar target/cmo_server-0.0.1-SNAPSHOT.jar --server.address=0.0.0.0 --file.upload-dir=/data/catcam
+java -jar target/cmo_server-0.0.1-SNAPSHOT.jar --server.port=9191 --file.upload-dir=/data/catcam
 ```
 
 ## Web client
@@ -58,12 +59,52 @@ Motion events are stored under the upload directory as:
         me_data.json         event metadata (must contain me_name and me_time)
         me_ollama.json       optional classification, e.g. {"cat": true, "dog": false}
         me_rep_image.jpg     representative image, movie, etc.
-        images/              individual frames
+        images/              individual frames (old Pi clients only)
 ```
+
+An unknown camera or date gives an empty list, not an error.
 
 ## Endpoints
 
 All examples assume the server is at `http://localhost:9090`.
+
+### Checking the server and uploads
+
+#### `GET /catcam/health`
+
+Is the server up, which build is it, where does it keep events, and each camera's newest event.
+Cheap: it only lists folders. Use it to check that a camera or a test points at the right server.
+
+```sh
+curl http://localhost:9090/catcam/health
+# {"status":"ok","version":"0.0.1-SNAPSHOT","build_time":"2026-10-11T23:20:25Z",
+#  "upload_dir":"/data/catcam","free_bytes":...,"total_bytes":...,
+#  "groups":{"pet_door":{"dates":420,"newest_date":"20261011","newest_event":"20261011_080000_0002"}, ...}}
+```
+
+#### `GET /catcam/latest?n=N` and `GET /catcam/latest/{meGroup}?n=N`
+
+The newest events of every camera (or one), across dates, newest first. `n` defaults to 10
+(at most 200). Always brief (see [Large responses](#large-responses)), with each event's
+`me_ollama.json` added as `me_ollama`.
+
+```sh
+curl "http://localhost:9090/catcam/latest?n=3"
+# [{"me_name":"20261011_152738_0000","me_group":"porch",...,"me_ollama":{"dog":true,...}}, ...]
+```
+
+#### `GET /catcam/event/{meGroup}/{meEventGroup}/{meName}`
+
+Everything about one event: its files and sizes, `me_ollama.json`, `me_data.json` (brief), and
+`complete`, which is true when `me_data.json` and the movie and picture it names are all there.
+404 if there is no such event. Use it to check that an upload fully landed.
+
+```sh
+curl http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000
+# {"me_group":"porch","me_event_group":"20261011","me_name":"20261011_152738_0000","complete":true,
+#  "files":{"me_data.json":845,"me_movie.mp4":1430736,"me_ollama.json":119,"me_rep_image.jpg":119646},
+#  "me_ollama":{...},"me_data":{...}}
+```
 
 ### Browsing events
 
@@ -150,20 +191,16 @@ curl -O http://localhost:9090/catcam/data/pet_door/20200327/20200326_234655_0310
 curl -O http://localhost:9090/catcam/data/pet_door/20200327/20200326_234655_0310/images/frame_0001.jpg
 ```
 
-#### `GET /catcam/movie/{fileName}`
-
-Downloads a file from the top level of the upload directory.
-
 ### Uploading
 
 #### `POST /uploadme/{meGroup}/{meEventGroup}/{meName}`
 
-Used by the Pi clients to upload an event's files. Multipart form fields:
+Used by the cameras to upload an event's files. Multipart form fields:
 
 | Field | Meaning |
 |---|---|
 | `file` | The file to upload |
-| `image_dir` | Empty string to store in the event directory; any non-empty value stores it in the event's `images/` subdirectory |
+| `image_dir` | Optional. Empty or left out: stored in the event directory. Any other value: stored in the event's `images/` subdirectory |
 
 ```sh
 # event metadata
@@ -174,28 +211,9 @@ curl -F "image_dir=images" -F "file=@frame_0001.jpg" \
   http://localhost:9090/uploadme/pet_door/20200327/20200326_234655_0310
 ```
 
-Returns `{"fileName", "fileDownloadUri", "fileType", "size"}`.
+Returns `{"fileName", "fileDownloadUri", "fileType", "size"}`, where `fileDownloadUri` is the file's `/catcam/data/...` link.
 
-#### `POST /uploadfile`
+## Tests
 
-Uploads a single file to the top level of the upload directory.
-
-```sh
-curl -F "file=@helloworld.jpeg" http://localhost:9090/uploadfile
-```
-
-### Test / debug endpoints
-
-| Endpoint | Behavior |
-|---|---|
-| `GET /` | Returns `Hello, World!` |
-| `GET /hello2` | Returns `Heeeeeeeeeeeeeeeey` |
-| `GET /echotheid/{id}` | Returns `id * 2` |
-| `POST /eatarray` | Echoes a JSON array back |
-| `POST /eatmap` | Echoes a JSON object back |
-
-```sh
-curl http://localhost:9090/echotheid/21
-curl -H "Content-Type: application/json" -d '[1,2,3,"a"]' http://localhost:9090/eatarray
-curl -H "Content-Type: application/json" -d '{"key1":"one"}' http://localhost:9090/eatmap
-```
+`mvn clean package` runs the endpoint tests (`src/test/`) against events in `target/test-uploads/`,
+so they never touch real data.
