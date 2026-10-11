@@ -221,6 +221,83 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         return(list);
     }
     
+    // Search every date for events that ollama tagged with a label (cat, dog, person, ...), newest first.
+    // For the next page pass the me_name of the last event received as "before".
+	@RequestMapping("/catcam/search/{meGroup}")
+    public List<MeEvent> SearchMeEvents(
+    		@PathVariable String meGroup,
+    		@RequestParam String label,
+    		@RequestParam int howMayRecords,
+    		@RequestParam Double minimumDuration,
+    		@RequestParam(required = false) String before,
+    		HttpServletRequest request) throws IOException  {
+        Log.info("/catcam/search label="+label+" before="+before);
+
+    	List<MeEvent> list = new ArrayList<MeEvent>();
+    	String uploadDir = fileStorageService.getFileStorageProperties().getUploadDir();
+    	File[] dateDirs = new File(uploadDir+"/"+meGroup).listFiles(File::isDirectory);
+    	if(dateDirs == null) return(list);
+    	Arrays.sort(dateDirs, Comparator.comparing(File::getName).reversed());
+
+    	// event names start with their date (yyyyMMdd_...) so whole dates after "before" can be skipped
+    	String beforeDate = (before != null && before.length() >= 8) ? before.substring(0,8) : null;
+    	Gson gson = new Gson();
+    	int scanned = 0;
+        long startTime = System.nanoTime();
+
+        for (File dateDir : dateDirs)
+        {
+        	if(list.size()>=howMayRecords) break;
+        	if(beforeDate != null && dateDir.getName().compareTo(beforeDate) > 0) continue;
+
+        	File[] eventDirs = dateDir.listFiles(File::isDirectory);
+        	if(eventDirs == null) continue;
+        	Arrays.sort(eventDirs, Comparator.comparing(File::getName).reversed());
+
+        	for (File eventDir : eventDirs)
+        	{
+        		if(list.size()>=howMayRecords) break;
+        		if(before != null && eventDir.getName().compareTo(before) >= 0) continue;
+
+        		scanned++;
+        		if(!hasOllamaLabel(new File(eventDir,"me_ollama.json"),label,gson)) continue;
+
+        		String jsonPath = eventDir.getPath()+"/me_data.json";
+        		try {
+        			String json = Files.readString(new File(jsonPath).toPath(), StandardCharsets.US_ASCII);
+        			MeEvent meEvent = gson.fromJson(json,MeEvent.class);
+        			if(meEvent.hasMeTime())
+        				if(meEvent.getMeTime()>minimumDuration)
+        					list.add(meEvent);
+        		}
+        		catch(Exception e) {
+        			Log.warn("error reading in json file="+jsonPath+" error="+e.getMessage());
+        		}
+        	}
+        }
+
+        long elapsedTime = (System.nanoTime() - startTime)/1000000;
+        Log.info("SearchMeEvents: label="+label+" list="+list.size()+" scanned="+scanned+" elapsedTime="+elapsedTime);
+
+        return(list);
+    }
+
+    // true if the event's me_ollama.json has the label (any case) set to true
+    private boolean hasOllamaLabel(File ollamaFile,String label,Gson gson) {
+    	if(!ollamaFile.exists()) return(false);
+    	try {
+    		String json = Files.readString(ollamaFile.toPath(), StandardCharsets.UTF_8);
+    		Map<String,Object> ollama = gson.fromJson(json, new TypeToken<Map<String,Object>>() {}.getType());
+    		for (Map.Entry<String,Object> entry : ollama.entrySet())
+    			if(entry.getKey().equalsIgnoreCase(label) && Boolean.TRUE.equals(entry.getValue()))
+    				return(true);
+    	}
+    	catch(Exception e) {
+    		Log.warn("error reading in json file="+ollamaFile.getPath()+" error="+e.getMessage());
+    	}
+    	return(false);
+    }
+
     @SuppressWarnings({ "unchecked", "rawtypes" })
 	@RequestMapping("/catcam/megroups")
     public List<MeGroup> GetMeGroups(HttpServletRequest request) throws IOException  {
