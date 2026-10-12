@@ -1,8 +1,7 @@
 # cmo_server
 
-Server end for the motion cameras ("catcam"): the pet door Pi
-([pet_cam](https://github.com/markmckellar/pet_cam)) and the porch camera
-([porch_cam](https://github.com/markmckellar/porch_cam)) record motion events and upload them here; the server stores them on
+Server end for the motion cameras ("catcam"): the pet door Pi and the porch camera, both running
+cmo_watch from [cmo_client](https://github.com/markmckellar/cmo_client), record motion events and upload them here; the server stores them on
 disk and serves them, plus a web client (`src/main/resources/static/cmo_client/`), for
 browsing and searching events.
 
