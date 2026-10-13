@@ -105,6 +105,17 @@ curl http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000
 #  "me_ollama":{...},"me_data":{...}}
 ```
 
+#### `DELETE /catcam/event/{meGroup}/{meEventGroup}/{meName}`
+
+Deletes one event: its folder and every file in it. If that leaves the date folder empty, the
+date folder goes too. 404 if there is no such event. There is no undo, and no login: anyone who
+can reach the server can do this. The web client asks for confirmation first.
+
+```sh
+curl -X DELETE http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000
+# {"me_group":"porch","me_event_group":"20261011","me_name":"20261011_152738_0000","deleted":true}
+```
+
 ### Browsing events
 
 #### `GET /catcam/megroups`

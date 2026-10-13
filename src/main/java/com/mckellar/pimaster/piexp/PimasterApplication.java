@@ -7,12 +7,14 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -70,7 +72,12 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
 	@Override
 	protected void configure(HttpSecurity http) throws Exception {
-	    http.cors().configurationSource(request -> new CorsConfiguration().applyPermitDefaultValues());
+	    // the defaults allow GET, HEAD and POST; the web client also deletes events
+	    http.cors().configurationSource(request -> {
+	    	CorsConfiguration cors = new CorsConfiguration().applyPermitDefaultValues();
+	    	cors.addAllowedMethod(HttpMethod.DELETE);
+	    	return(cors);
+	    });
 	    http.csrf().disable();
 	}
 
@@ -377,6 +384,42 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	result.put("files", files);
     	result.put("me_ollama", readOllama(eventDir));
     	result.put("me_data", meData == null ? null : briefMeEvent(meData));
+    	return(result);
+    }
+
+    // Delete one event: its folder and everything in it. The date folder goes too if that
+    // leaves it empty. 404 if there is no such event.
+    @DeleteMapping("/catcam/event/{meGroup}/{meEventGroup}/{meName}")
+    public Map<String,Object> DeleteEvent(
+    		@PathVariable String meGroup,
+    		@PathVariable String meEventGroup,
+    		@PathVariable String meName) throws IOException {
+    	Log.info("DELETE /catcam/event/"+meGroup+"/"+meEventGroup+"/"+meName);
+    	File eventDir = uploadDir(meGroup, meEventGroup, meName);
+    	// only ever an event folder, three levels down; never a date, a camera or the uploads folder
+    	File dateDir = eventDir.getParentFile();
+    	if(dateDir == null || dateDir.getParentFile() == null
+    			|| !uploadRoot().equals(dateDir.getParentFile().getParentFile().toPath()))
+    		throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "bad path");
+    	if(!eventDir.isDirectory()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such event");
+
+    	int deleted = 0;
+    	try (Stream<Path> walk = Files.walk(eventDir.toPath())) {
+    		// deepest first, so each folder is empty by the time it is deleted
+    		for (Path p : walk.sorted(Comparator.reverseOrder()).collect(Collectors.toList())) {
+    			Files.delete(p);
+    			deleted++;
+    		}
+    	}
+    	String[] left = dateDir.list();
+    	if(left != null && left.length == 0) Files.deleteIfExists(dateDir.toPath());
+    	Log.info("DeleteEvent: "+meGroup+"/"+meEventGroup+"/"+meName+" deleted="+deleted);
+
+    	Map<String,Object> result = new LinkedHashMap<String,Object>();
+    	result.put("me_group", meGroup);
+    	result.put("me_event_group", meEventGroup);
+    	result.put("me_name", meName);
+    	result.put("deleted", true);
     	return(result);
     }
 
