@@ -5,11 +5,13 @@ import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.web.firewall.RequestRejectedException;
 import org.springframework.test.web.servlet.MockMvc;
@@ -169,6 +172,55 @@ class PimasterApplicationTests {
 				.andExpect(status().isOk());
 		mvc.perform(get("/catcam/data/test_cam/20261012/20261012_100000_0001/missing.mp4"))
 				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void changeClassification() throws Exception {
+		Path dir = Files.createDirectories(UPLOADS.resolve("classify_cam/20261013/20261013_100000_0001"));
+		String ollama = "{\"cat\": true, \"person\": false}";
+		Files.writeString(dir.resolve("me_ollama.json"), ollama);
+		String url = "/catcam/event/classify_cam/20261013/20261013_100000_0001/classification";
+
+		// the first change keeps ollama's answer as the original
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{\"cat\": false, \"person\": true, \"delivery\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.delivery").value(true))
+				.andExpect(jsonPath("$.cat").value(false))
+				.andExpect(jsonPath("$.me_ollama_original.cat").value(true))
+				.andExpect(jsonPath("$", not(hasKey("me_ollama_previous"))))
+				.andExpect(jsonPath("$", hasKey("me_ollama_changed")));
+
+		// later changes keep the one they replace as previous, and the original stays
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{\"cat\": false, \"person\": true, \"delivery\": false}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.me_ollama_original.cat").value(true))
+				.andExpect(jsonPath("$.me_ollama_original", not(hasKey("delivery"))))
+				.andExpect(jsonPath("$.me_ollama_previous.delivery").value(true))
+				.andExpect(jsonPath("$.me_ollama_previous", not(hasKey("me_ollama_original"))));
+		mvc.perform(get("/catcam/data/classify_cam/20261013/20261013_100000_0001/me_ollama.json"))
+				.andExpect(jsonPath("$.person").value(true))
+				.andExpect(jsonPath("$.delivery").value(false));
+
+		// at least one label must be true, and labels are true/false only; a refused change writes nothing
+		String before = Files.readString(dir.resolve("me_ollama.json"));
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{\"cat\": false}")).andExpect(status().isBadRequest());
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isBadRequest());
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{\"cat\": \"yes\"}")).andExpect(status().isBadRequest());
+		mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content("{\"me_ollama_original\": true}")).andExpect(status().isBadRequest());
+		assertEquals(before, Files.readString(dir.resolve("me_ollama.json")));
+
+		mvc.perform(put("/catcam/event/classify_cam/20261013/no_such_event/classification")
+				.contentType(MediaType.APPLICATION_JSON).content("{\"cat\": true}")).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void classifyAnEventOllamaNeverDid() throws Exception {
+		Files.createDirectories(UPLOADS.resolve("classify_cam/20261013/20261013_110000_0002"));
+		mvc.perform(put("/catcam/event/classify_cam/20261013/20261013_110000_0002/classification")
+				.contentType(MediaType.APPLICATION_JSON).content("{\"dog\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$", hasKey("me_ollama_original")))
+				.andExpect(jsonPath("$.me_ollama_original").doesNotExist());
 	}
 
 	@Test

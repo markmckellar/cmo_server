@@ -56,7 +56,7 @@ Motion events are stored under the upload directory as:
     <meEventGroup>/          date, yyyyMMdd, e.g. 20200327
       <meName>/              event, yyyyMMdd_HHmmss_NNNN, e.g. 20200326_234655_0310
         me_data.json         event metadata (must contain me_name and me_time)
-        me_ollama.json       optional classification, e.g. {"cat": true, "dog": false}
+        me_ollama.json       optional classification, e.g. {"cat": true, "dog": false}; see PUT .../classification
         me_rep_image.jpg     representative image, movie, etc.
         images/              individual frames (old Pi clients only)
 ```
@@ -114,6 +114,26 @@ can reach the server can do this. The web client asks for confirmation first.
 ```sh
 curl -X DELETE http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000
 # {"me_group":"porch","me_event_group":"20261011","me_name":"20261011_152738_0000","deleted":true}
+```
+
+#### `PUT /catcam/event/{meGroup}/{meEventGroup}/{meName}/classification`
+
+Changes an event's classification (its `me_ollama.json`) to the labels in the body. Every value
+must be `true` or `false`, and at least one must be `true`, or it is a 400. 404 if there is no
+such event. The web client does this when you tap a classification on an event.
+
+Nothing is lost. The first change keeps what ollama said as `me_ollama_original` (`null` if
+ollama never classified the event). Each later change keeps the classification it replaces as
+`me_ollama_previous`. `me_ollama_changed` is when it was last changed. Keys starting with `me_`
+are never labels. Returns the new `me_ollama.json`.
+
+```sh
+curl -X PUT -H 'Content-Type: application/json' \
+  -d '{"person": true, "legs": true, "cat": false, "delivery": true}' \
+  http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000/classification
+# {"person":true,"legs":true,"cat":false,"delivery":true,
+#  "me_ollama_original":{"legs":false,"person":true,"cat":false},
+#  "me_ollama_changed":"2026-10-13T23:33:55.521Z"}
 ```
 
 ### Browsing events

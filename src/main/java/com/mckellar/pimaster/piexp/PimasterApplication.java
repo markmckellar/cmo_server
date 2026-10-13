@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageProperties;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageService;
@@ -37,6 +40,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -72,10 +77,11 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
 	@Override
 	protected void configure(HttpSecurity http) throws Exception {
-	    // the defaults allow GET, HEAD and POST; the web client also deletes events
+	    // the defaults allow GET, HEAD and POST; the web client also deletes events and changes their classification
 	    http.cors().configurationSource(request -> {
 	    	CorsConfiguration cors = new CorsConfiguration().applyPermitDefaultValues();
 	    	cors.addAllowedMethod(HttpMethod.DELETE);
+	    	cors.addAllowedMethod(HttpMethod.PUT);
 	    	return(cors);
 	    });
 	    http.csrf().disable();
@@ -420,6 +426,71 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	result.put("me_event_group", meEventGroup);
     	result.put("me_name", meName);
     	result.put("deleted", true);
+    	return(result);
+    }
+
+    // me_ollama.json keys that aren't labels: copies of the classification from before someone
+    // changed it, and when they last did
+    private static final String OLLAMA_ORIGINAL = "me_ollama_original";
+    private static final String OLLAMA_PREVIOUS = "me_ollama_previous";
+    private static final String OLLAMA_CHANGED = "me_ollama_changed";
+
+    // for writing me_ollama.json: readable, and keeps a null original (an event ollama never classified)
+    private final Gson ollamaWriter = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
+
+    // Just the labels of a me_ollama.json, without the backups
+    private static Map<String,Object> ollamaLabels(Map<String,Object> ollama) {
+    	Map<String,Object> labels = new LinkedHashMap<String,Object>();
+    	for (Map.Entry<String,Object> entry : ollama.entrySet())
+    		if(!entry.getKey().startsWith("me_")) labels.put(entry.getKey(), entry.getValue());
+    	return(labels);
+    }
+
+    // Change an event's classification to the labels in the body, e.g. {"cat": true, "delivery": false}.
+    // At least one label must be true. Nothing is lost: the first change keeps what ollama said as
+    // me_ollama_original, and each later change keeps the classification it replaces as me_ollama_previous.
+    // Returns the new me_ollama.json. 404 if there is no such event.
+    @PutMapping("/catcam/event/{meGroup}/{meEventGroup}/{meName}/classification")
+    public synchronized Map<String,Object> PutClassification(
+    		@PathVariable String meGroup,
+    		@PathVariable String meEventGroup,
+    		@PathVariable String meName,
+    		@RequestBody Map<String,Object> labels) throws IOException {
+    	Log.info("PUT /catcam/event/"+meGroup+"/"+meEventGroup+"/"+meName+"/classification labels="+labels);
+    	File eventDir = uploadDir(meGroup, meEventGroup, meName);
+    	if(!eventDir.isDirectory()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such event");
+
+    	boolean anyTrue = false;
+    	for (Map.Entry<String,Object> entry : labels.entrySet()) {
+    		if(!entry.getKey().matches("[a-z0-9_]+") || entry.getKey().startsWith("me_"))
+    			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "bad label: "+entry.getKey());
+    		if(!(entry.getValue() instanceof Boolean))
+    			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "label "+entry.getKey()+" must be true or false");
+    		anyTrue |= (Boolean)entry.getValue();
+    	}
+    	if(!anyTrue) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "at least one label must be true");
+
+    	File ollamaFile = new File(eventDir, "me_ollama.json");
+    	Map<String,Object> old = readOllama(eventDir);
+    	// never overwrite a classification we couldn't read, it may be the only copy of ollama's answer
+    	if(old == null && ollamaFile.exists())
+    		throw new ResponseStatusException(HttpStatus.CONFLICT, "can't read the event's me_ollama.json");
+
+    	Map<String,Object> result = new LinkedHashMap<String,Object>(labels);
+    	if(old != null && old.containsKey(OLLAMA_ORIGINAL)) {
+    		result.put(OLLAMA_ORIGINAL, old.get(OLLAMA_ORIGINAL));
+    		result.put(OLLAMA_PREVIOUS, ollamaLabels(old));
+    	}
+    	else {
+    		result.put(OLLAMA_ORIGINAL, old == null ? null : ollamaLabels(old));
+    	}
+    	result.put(OLLAMA_CHANGED, Instant.now().toString());
+
+    	// write it whole then swap it in, so a reader never sees half a file
+    	File tmpFile = new File(eventDir, "me_ollama.json.tmp");
+    	Files.writeString(tmpFile.toPath(), ollamaWriter.toJson(result), StandardCharsets.UTF_8);
+    	Files.move(tmpFile.toPath(), ollamaFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    	Log.info("PutClassification: "+meGroup+"/"+meEventGroup+"/"+meName+" now="+labels);
     	return(result);
     }
 
