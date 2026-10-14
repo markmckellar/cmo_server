@@ -54,6 +54,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import javax.annotation.PostConstruct;
 import javax.servlet.http.HttpServletRequest;
 
 import org.slf4j.Logger;
@@ -99,6 +100,24 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     // set by the build (spring-boot-maven-plugin build-info); missing when run from an IDE
     @Autowired(required = false)
     private BuildProperties buildProperties;
+
+    // which code this is, in the log once at startup
+    @PostConstruct
+    void logCodeVersion() {
+    	if(buildProperties != null) CodeVersion.setFallback(buildProperties.getVersion());
+    	Log.info("running "+CodeVersion.code());
+    }
+
+    // This server's version, e.g. {"code": "cmo_server:1.3.0", "version": "1.3.0", "build_time": "..."}
+    // (see CodeVersion and release.bash)
+    @GetMapping("/catcam/version")
+    public Map<String,Object> GetVersion() {
+    	Map<String,Object> result = new LinkedHashMap<String,Object>();
+    	result.put("code", CodeVersion.code());
+    	result.put("version", CodeVersion.version());
+    	result.put("build_time", buildProperties == null || buildProperties.getTime() == null ? null : buildProperties.getTime().toString());
+    	return(result);
+    }
 
     class MeGroup {
       	public String meGroup;
@@ -430,10 +449,11 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     }
 
     // me_ollama.json keys that aren't labels: copies of the classification from before someone
-    // changed it, and when they last did
+    // changed it, when they last did, and the server code that wrote it (e.g. cmo_server:1.3.0)
     private static final String OLLAMA_ORIGINAL = "me_ollama_original";
     private static final String OLLAMA_PREVIOUS = "me_ollama_previous";
     private static final String OLLAMA_CHANGED = "me_ollama_changed";
+    private static final String OLLAMA_CHANGED_BY = "me_ollama_changed_by";
 
     // for writing me_ollama.json: readable, and keeps a null original (an event ollama never classified)
     private final Gson ollamaWriter = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
@@ -485,6 +505,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		result.put(OLLAMA_ORIGINAL, old == null ? null : ollamaLabels(old));
     	}
     	result.put(OLLAMA_CHANGED, Instant.now().toString());
+    	result.put(OLLAMA_CHANGED_BY, CodeVersion.code());
 
     	// write it whole then swap it in, so a reader never sees half a file
     	File tmpFile = new File(eventDir, "me_ollama.json.tmp");
@@ -558,7 +579,8 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     	Map<String,Object> result = new LinkedHashMap<String,Object>();
     	result.put("status", "ok");
-    	result.put("version", buildProperties == null ? null : buildProperties.getVersion());
+    	result.put("code", CodeVersion.code());
+    	result.put("version", CodeVersion.version());
     	result.put("build_time", buildProperties == null || buildProperties.getTime() == null ? null : buildProperties.getTime().toString());
     	result.put("upload_dir", root.getPath());
     	result.put("free_bytes", root.getUsableSpace());

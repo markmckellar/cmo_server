@@ -76,9 +76,18 @@ Cheap: it only lists folders. Use it to check that a camera or a test points at 
 
 ```sh
 curl http://localhost:9090/catcam/health
-# {"status":"ok","version":"0.0.1-SNAPSHOT","build_time":"2026-10-11T23:20:25Z",
+# {"status":"ok","code":"cmo_server:1.0.0","version":"1.0.0","build_time":"2026-10-11T23:20:25Z",
 #  "upload_dir":"/data/catcam","free_bytes":...,"total_bytes":...,
 #  "groups":{"pet_door":{"dates":420,"newest_date":"20261011","newest_event":"20261011_080000_0002"}, ...}}
+```
+
+#### `GET /catcam/version`
+
+This server's version (see [Versions](#versions)), also logged once at startup (`running cmo_server:1.0.0`).
+
+```sh
+curl http://localhost:9090/catcam/version
+# {"code":"cmo_server:1.0.0","version":"1.0.0","build_time":"2026-10-14T22:08:18.898Z"}
 ```
 
 #### `GET /catcam/latest?n=N` and `GET /catcam/latest/{meGroup}?n=N`
@@ -124,8 +133,8 @@ such event. The web client does this when you tap a classification on an event.
 
 Nothing is lost. The first change keeps what ollama said as `me_ollama_original` (`null` if
 ollama never classified the event). Each later change keeps the classification it replaces as
-`me_ollama_previous`. `me_ollama_changed` is when it was last changed. Keys starting with `me_`
-are never labels. Returns the new `me_ollama.json`.
+`me_ollama_previous`. `me_ollama_changed` is when it was last changed, and `me_ollama_changed_by` the
+server code that changed it (`cmo_server:1.0.0`). Keys starting with `me_` are never labels. Returns the new `me_ollama.json`.
 
 ```sh
 curl -X PUT -H 'Content-Type: application/json' \
@@ -133,7 +142,7 @@ curl -X PUT -H 'Content-Type: application/json' \
   http://localhost:9090/catcam/event/porch/20261011/20261011_152738_0000/classification
 # {"person":true,"legs":true,"cat":false,"delivery":true,
 #  "me_ollama_original":{"legs":false,"person":true,"cat":false},
-#  "me_ollama_changed":"2026-10-13T23:33:55.521Z"}
+#  "me_ollama_changed":"2026-10-13T23:33:55.521Z","me_ollama_changed_by":"cmo_server:1.0.0"}
 ```
 
 ### Browsing events
@@ -242,6 +251,14 @@ curl -F "image_dir=images" -F "file=@frame_0001.jpg" \
 ```
 
 Returns `{"fileName", "fileDownloadUri", "fileType", "size"}`, where `fileDownloadUri` is the file's `/catcam/data/...` link.
+
+## Versions
+
+Versioned the same way as every cmo repo (see cmo_ollama's README): `cmo_server:1.3.0` on the `v1.3.0`
+release, `1.3.0+4` four commits after it, `1.3.0+4.dirty` with uncommitted changes too. The server runs
+from its git checkout, so `CodeVersion` asks `git describe` at startup; without git it uses the pom's
+version, which `release.bash` sets to the tag's. To release, commit everything and run
+`./release.bash patch|minor|major [message]`: it sets the pom's `<version>`, commits that, and tags it.
 
 ## Tests
 
