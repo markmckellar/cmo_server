@@ -20,7 +20,7 @@ sudo apt install openjdk-17-jdk maven
 
 ```sh
 mvn clean package
-java -jar target/cmo_server-0.0.1-SNAPSHOT.jar
+java -jar target/cmo_server-*.jar
 ```
 
 For development you can also run straight from source with `mvn spring-boot:run`.
@@ -39,7 +39,7 @@ Settings live in `src/main/resources/application.properties`:
 Any property can be overridden at launch without rebuilding, e.g.:
 
 ```sh
-java -jar target/cmo_server-0.0.1-SNAPSHOT.jar --server.port=9191 --file.upload-dir=/data/catcam
+java -jar target/cmo_server-*.jar --server.port=9191 --file.upload-dir=/data/catcam
 ```
 
 ## Web client
