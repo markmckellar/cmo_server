@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.mckellar.pimaster</groupId>
 	<artifactId>cmo_server</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>1.0.0</version>
 	<name>cmo_server</name>
 	<description>com/mckellar/pimaster/piexp</description>
 	<properties>
