@@ -49,37 +49,54 @@ The rules live there, and nowhere else.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `cmo.auth.mode` | `google` | `google`: cameras and scripts need a device key; people will sign in with Google (coming). `open`: no logins, for a server at home; only requests from the home network are served, and anything that came through a proxy (Caddy adds `X-Forwarded-For`) is refused. The server won't start in open mode on a specific public address. |
-| `cmo.auth.public-read` | `false` | Temporary: anyone may view until Google sign-in exists. Uploading, deleting and relabeling still need a key or a login. |
-| `cmo.auth.access-file` | `local/access.json` | Accounts and device keys (never in git). Read again whenever it changes, so adding a device needs no restart. |
+| `cmo.auth.mode` | `google` | `google`: people sign in with Google, cameras and scripts send a device key. `open`: no logins, for a server at home; only requests from the home network are served, and anything that came through a proxy (Caddy adds `X-Forwarded-For`) is refused. The server won't start in open mode on a specific public address. |
+| `cmo.auth.google-client-id` | (none) | The "Home Cams web" OAuth client ID from the Google console (Google project `cmo-cameras`). |
+| `cmo.auth.access-file` | `local/access.json` | Admins, households and their members, device keys, people waiting, people turned away (never in git, mode 600). Read again whenever it changes; approvals are written back safely. |
+| `cmo.auth.session-key-file` | `local/session.key` | The secret that signs sign-in cookies; made on first start. Deleting it signs everyone out. |
+| `cmo.auth.session-days` | `30` | How long a sign-in lasts. |
+| `cmo.auth.notify-config` | (none) | `TOKEN=`/`CHAT_ID=` Telegram config (ai-chat-send's format) for "someone asked for access" alerts. |
+| `cmo.auth.public-read` | `false` | Temporary: anyone may view. Uploading, deleting and relabeling still need a key or a login. |
 
 **Who may do what (google mode):**
 
 | Caller | May |
 |---|---|
-| Anyone | `GET /`, `/catcam/version`, `/catcam/health`, `/auth/config`, the web app's files under `/cmo_client/` |
+| Anyone | `GET /`, `/catcam/version`, `/catcam/health`, `/auth/config`, sign in and out, `/signin.html`, `/admin.html` (the page; its data is admins only), the web app's files under `/cmo_client/` |
 | Camera device | Upload to its own cameras (`POST /uploadme/{its camera}/...`) and the public paths; nothing else |
 | Reader device (scripts) | View its account's cameras (lists show only those) |
-| Person (signed in, coming) | View their account's cameras, relabel and delete events there |
+| Person waiting for approval | Nothing yet; the sign-in page says they're waiting |
+| Household member | View and relabel their household's cameras |
+| Admin | See every camera, delete events, approve and reject people (`/admin.html`, `/auth/admin/*`) |
 
-Cameras and scripts send `Authorization: Bearer <key>`. An open-mode server ignores the key, so the same camera
-settings work against a server at home and one in the cloud.
+**Signing in:** anyone with a Google account can sign in at `/signin.html`. The server checks Google's token
+(signature, our client ID, expiry, verified email) and sets a sign-in cookie (HttpOnly, SameSite=Lax, Secure over
+HTTPS, signed with the session key). What the person may do is looked up in access.json on every request, so
+removing someone takes effect at once. A stranger's first sign-in becomes a request for access: it's saved in
+access.json and the admin gets one Telegram message with a link to `/admin.html`, where they approve (choosing the
+household) or reject. A browser opening a protected link while signed out (e.g. a Telegram movie link) is sent to
+the sign-in page and back. Change requests from signed-in browsers must come from this site.
+
+Cameras and scripts send `Authorization: Bearer <key>`. An open-mode server ignores keys and cookies, so the same
+camera settings work against a server at home and one in the cloud.
 
 **access.json:**
 
 ```json
 {
+  "admins": ["someone@gmail.com"],
   "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "cameras": ["pet_door", "porch_cam"]} ],
   "devices": [
     {"id": "pet_door_pi", "account": "home", "role": "camera", "cameras": ["pet_door"], "key_hashes": ["sha256:..."]},
     {"id": "ada_scripts", "account": "home", "role": "reader", "key_hashes": ["sha256:..."]}
-  ]
+  ],
+  "pending": [],
+  "rejected": []
 }
 ```
 
-**A new key:** `./new_device_key.bash <device-id>` prints the key (once) and its hash. The key goes on the device
-only; the hash goes in the device's `key_hashes`. A device may have two hashes, so a key can be changed without
-downtime: add the new hash, update the device, then remove the old hash. The server stores only hashes.
+**A new device key:** `./new_device_key.bash <device-id>` prints the key (once) and its hash. The key goes on the
+device only; the hash goes in the device's `key_hashes`. A device may have two hashes, so a key can be changed
+without downtime: add the new hash, update the device, then remove the old hash. The server stores only hashes.
 
 ## Web client
 

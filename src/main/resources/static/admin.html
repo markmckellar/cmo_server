@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Access · Home Cams</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #1f2328; --muted: #59636e; --line: #e3e5e8; --accent: #2b5d8a; --ok: #1a7f37; --bad: #cf222e; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #15181c; --card: #1d2126; --text: #e6e8eb; --muted: #9aa4af; --line: #30363d; --accent: #7fb0dd; --ok: #3fb950; --bad: #f85149; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    h1 { font-size: 1.5rem; margin: 0; }
+    h2 { font-size: 1.05rem; margin: 28px 0 10px; }
+    .muted { color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 8px 0;
+            display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .who b { display: block; }
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    select, button { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+    button.ok { border-color: var(--ok); color: var(--ok); }
+    button.bad { border-color: var(--bad); color: var(--bad); }
+    a { color: var(--accent); }
+    ul { margin: 6px 0; padding-left: 20px; }
+    #msg { min-height: 1.5em; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Who can see the cameras</h1>
+    <span class="muted" id="me"></span>
+  </header>
+  <p id="msg" class="muted"></p>
+  <section id="body"></section>
+  <p><a href="/cmo_client/index.html">Back to the cameras</a></p>
+</main>
+<script>
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const msg = t => document.getElementById('msg').textContent = t;
+  let accounts = [];
+
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+    return r.json();
+  }
+  function accountPicker(id) {
+    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '">' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')</option>').join('') + '</select>';
+  }
+  document.addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    if (b.dataset.act === 'approve') approve(b.dataset.picker, b.dataset.email);
+    else if (b.dataset.act === 'reject') reject(b.dataset.email);
+  });
+  async function approve(i, email) {
+    const account = document.getElementById('acct-' + i).value;
+    try { await post('/auth/admin/approve', { email, account }); msg(email + ' approved into ' + account + '.'); load(); } catch (e) { msg('Failed: ' + e.message); }
+  }
+  async function reject(email) {
+    if (!confirm('Turn away ' + email + '? They won\'t be asked about again.')) return;
+    try { await post('/auth/admin/reject', { email }); msg(email + ' turned away.'); load(); } catch (e) { msg('Failed: ' + e.message); }
+  }
+
+  async function load() {
+    const cfg = await (await fetch('/auth/config')).json();
+    if (cfg.mode === 'open') { document.getElementById('body').innerHTML = '<p>This server is in open mode (home network only): there are no sign-ins to approve.</p>'; return; }
+    if (cfg.caller !== 'person') { location.replace('/signin.html?next=' + encodeURIComponent('/admin.html')); return; }
+    document.getElementById('me').textContent = cfg.email;
+    if (!cfg.admin) { document.getElementById('body').innerHTML = '<p>Only admins can see this page.</p>'; return; }
+    const r = await fetch('/auth/admin/requests');
+    if (!r.ok) { msg('Couldn\'t load the list (' + r.status + ').'); return; }
+    const d = await r.json();
+    accounts = d.accounts;
+    let h = '<h2>Waiting for approval (' + d.pending.length + ')</h2>';
+    h += d.pending.length ? d.pending.map((p, i) =>
+      '<div class="card"><div class="who"><b>' + esc(p.name) + '</b><span class="muted">' + esc(p.email) + ' · asked ' + esc(new Date(p.firstSeen).toLocaleString()) + '</span></div>' +
+      '<div class="actions">' + accountPicker(i) + '<button class="ok" data-act="approve" data-picker="' + i + '" data-email="' + esc(p.email) + '">Approve</button>' +
+      '<button class="bad" data-act="reject" data-email="' + esc(p.email) + '">Reject</button></div></div>').join('')
+      : '<p class="muted">Nobody is waiting.</p>';
+    h += '<h2>Households</h2>' + d.accounts.map(a =>
+      '<div class="card"><div class="who"><b>' + esc(a.id) + '</b><span class="muted">cameras: ' + esc(a.cameras.join(', ')) + '</span>' +
+      '<ul>' + (a.members.length ? a.members.map(m => '<li>' + esc(m) + '</li>').join('') : '<li class="muted">no members</li>') + '</ul></div></div>').join('');
+    if (d.rejected.length) h += '<h2>Turned away</h2>' + d.rejected.map((e, i) =>
+      '<div class="card"><div class="who">' + esc(e) + '</div><div class="actions">' + accountPicker('r' + i) +
+      '<button data-act="approve" data-picker="r' + i + '" data-email="' + esc(e) + '">Let in after all</button></div></div>').join('');
+    document.getElementById('body').innerHTML = h;
+  }
+  load().catch(e => msg('Couldn\'t reach the server.'));
+</script>
+</body>
+</html>

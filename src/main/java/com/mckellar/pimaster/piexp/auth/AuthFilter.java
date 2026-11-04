@@ -2,8 +2,12 @@ package com.mckellar.pimaster.piexp.auth;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.URI;
+import java.net.URLEncoder;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -24,27 +28,30 @@ import com.google.gson.Gson;
  *
  * <p>Modes ({@code cmo.auth.mode}):
  * <ul>
- * <li>{@code google} (the default): cameras and scripts send {@code Authorization: Bearer <device key>}; people
- * will sign in with Google (not built yet). A camera may only upload to its own cameras; a reader device may read
- * its account's cameras. Viewing without a login is allowed only while {@code cmo.auth.public-read=true}, a
- * temporary setting until Google sign-in exists.
- * <li>{@code open}: for a server at home (e.g. ada's copy). Anyone on the home network may do anything; keys are
- * ignored. Requests from anywhere else, or that came through a proxy, are refused, so an open server behind
- * Caddy or a forwarded port can't be used from the internet.
+ * <li>{@code google} (the default). Cameras and scripts send {@code Authorization: Bearer <device key>}; people
+ * sign in with Google and carry the sign-in cookie ({@link Sessions}). A camera may only upload to its own
+ * cameras; a reader device may view its account's cameras; a household member may view and relabel theirs;
+ * an admin may see every camera, delete events and approve people. Someone who signed in but isn't approved
+ * yet sees nothing. {@code cmo.auth.public-read=true} (temporary) lets anyone view.
+ * <li>{@code open}: for a server at home (e.g. ada's copy). Anyone on the home network may do anything; keys and
+ * cookies are ignored. Requests from anywhere else, or that came through a proxy, are refused.
  * </ul>
- * Always public: {@code /}, {@code /catcam/version}, {@code /catcam/health}, {@code /auth/config} and the web app's
- * own files under {@code /cmo_client/}.
+ * Always public: {@code /}, {@code /catcam/version}, {@code /catcam/health}, {@code /auth/config}, signing in and
+ * out, the sign-in and admin pages and the web app's own files under {@code /cmo_client/}. A browser opening a
+ * protected page while signed out is sent to the sign-in page, and back afterwards.
  */
 public class AuthFilter extends OncePerRequestFilter {
 
 	private static final Logger Log = LoggerFactory.getLogger(AuthFilter.class);
 
 	private final AccessStore store;
+	private final Sessions sessions;
 	private final boolean open;
 	private final boolean publicRead;
 
-	public AuthFilter(AccessStore store, boolean open, boolean publicRead) {
+	public AuthFilter(AccessStore store, Sessions sessions, boolean open, boolean publicRead) {
 		this.store = store;
+		this.sessions = sessions;
 		this.open = open;
 		this.publicRead = publicRead;
 	}
@@ -82,26 +89,40 @@ public class AuthFilter extends OncePerRequestFilter {
 			caller = found.get();
 		}
 		else {
-			caller = publicRead ? new Caller("anonymous", null, null, null, null) : Caller.ANONYMOUS;
+			caller = sessions == null ? null : sessions.read(request).map(s -> callerForPerson(s.email(), s.name())).orElse(null);
+			if (caller == null) caller = publicRead ? new Caller("anonymous", null, null, null, null, false, null) : Caller.ANONYMOUS;
 		}
 		request.setAttribute(Caller.ATTRIBUTE, caller);
+
+		boolean change = !"GET".equals(method) && !"HEAD".equals(method);
+		if (change && caller.isPerson() && !sameOrigin(request)) {
+			deny(response, 403, "request from another site");
+			return;
+		}
 
 		String problem = check(caller, method, path);
 		if (problem == null) {
 			chain.doFilter(request, response);
 			return;
 		}
-		boolean anonymous = "anonymous".equals(caller.kind());
-		if (anonymous) response.setHeader("WWW-Authenticate", "Bearer");
+		boolean notSignedIn = caller.isAnonymous();
 		Log.info("refused {} {} for {} {}: {}", method, path, caller.kind(), caller.id(), problem);
-		deny(response, anonymous ? 401 : 403, problem);
+		if ((notSignedIn || (caller.isPerson() && !caller.isApprovedPerson())) && "GET".equals(method) && wantsPage(request)) {
+			String next = request.getRequestURI() + (request.getQueryString() == null ? "" : "?" + request.getQueryString());
+			response.sendRedirect(request.getContextPath() + "/signin.html?next=" + URLEncoder.encode(next, StandardCharsets.UTF_8));
+			return;
+		}
+		if (notSignedIn) response.setHeader("WWW-Authenticate", "Bearer");
+		deny(response, notSignedIn ? 401 : 403, problem);
 	}
 
 	/** Null if the caller may make this request, else why not. */
 	String check(Caller caller, String method, String path) {
 		if (isPublic(method, path)) return null;
 
-		String[] seg = path.split("/");    // "", "catcam", "event", group, ...
+		if (path.startsWith("/auth/admin/")) return caller.admin() && caller.isPerson() ? null : "admins only";
+
+		String[] seg = path.split("/");    // "", "catcam", "event", camera, ...
 		String camera = seg.length > 2 && "uploadme".equals(seg[1]) ? seg[2] : seg.length > 3 ? seg[3] : null;
 
 		if ("POST".equals(method) && path.startsWith("/uploadme/")) {
@@ -110,28 +131,33 @@ public class AuthFilter extends OncePerRequestFilter {
 		}
 
 		boolean eventPath = path.startsWith("/catcam/event/");
-		if (eventPath && ("DELETE".equals(method) || "PUT".equals(method))) {
-			if (!caller.isPerson()) return "only people may change or delete events";
+		if (eventPath && "DELETE".equals(method))
+			return caller.isPerson() && caller.admin() ? null : "only admins may delete events";
+		if (eventPath && "PUT".equals(method)) {
+			if (!caller.isApprovedPerson()) return caller.isPerson() ? "waiting for approval" : "only people may change events";
 			return caller.canSee(camera) ? null : "not your camera";
 		}
 
 		if ("GET".equals(method) && isRead(path)) {
 			if (caller.isCameraDevice()) return "camera devices may only upload";
+			if (caller.isPerson() && !caller.isApprovedPerson() && caller.cameras() != null) return "waiting for approval";
 			boolean list = path.equals("/catcam/megroups") || path.equals("/catcam/latest");
-			if (list) return "anonymous".equals(caller.kind()) && caller.cameras() != null && caller.cameras().isEmpty()
+			if (list) return caller.isAnonymous() && caller.cameras() != null && caller.cameras().isEmpty()
 					? "sign in or send a device key" : null;    // the controller lists only what the caller may see
 			if (camera == null || camera.isEmpty()) return "no camera in the path";
 			if (caller.canSee(camera)) return null;
-			return "anonymous".equals(caller.kind()) ? "sign in or send a device key" : "not your camera";
+			return caller.isAnonymous() ? "sign in or send a device key" : "not your camera";
 		}
 
 		return "not allowed";
 	}
 
 	private static boolean isPublic(String method, String path) {
+		if ("POST".equals(method)) return path.equals("/auth/google") || path.equals("/auth/logout");
 		if (!"GET".equals(method) && !"HEAD".equals(method)) return false;
 		return path.equals("/") || path.equals("/catcam/version") || path.equals("/catcam/health")
-				|| path.equals("/auth/config") || path.equals("/favicon.ico") || path.startsWith("/cmo_client/");
+				|| path.equals("/auth/config") || path.equals("/favicon.ico") || path.equals("/signin.html")
+				|| path.equals("/admin.html") || path.startsWith("/cmo_client/");
 	}
 
 	private static boolean isRead(String path) {
@@ -145,8 +171,39 @@ public class AuthFilter extends OncePerRequestFilter {
 			Set<String> cameras = new HashSet<>();
 			if (d.isCamera()) cameras.addAll(d.cameras());
 			else store.account(d.account()).ifPresent(a -> cameras.addAll(a.cameras()));
-			return new Caller("device", d.id(), d.account(), d.role(), Set.copyOf(cameras));
+			return new Caller("device", d.id(), d.account(), d.role(), Set.copyOf(cameras), false, null);
 		});
+	}
+
+	/** A signed-in person, as access.json says today: admin, household member, rejected or still waiting. */
+	Caller callerForPerson(String email, String name) {
+		Optional<AccessStore.Account> account = store.accountForEmail(email);
+		if (store.isAdmin(email))
+			return new Caller("person", email, account.map(AccessStore.Account::id).orElse(null), "member", null, true, name);
+		if (account.isPresent())
+			return new Caller("person", email, account.get().id(), "member", Set.copyOf(account.get().cameras()), false, name);
+		String role = store.isRejected(email) ? "rejected" : "pending";
+		return new Caller("person", email, null, role, publicRead ? null : Set.of(), false, name);
+	}
+
+	/** A change request from a signed-in browser must come from this site (belt and braces with SameSite=Lax). */
+	private static boolean sameOrigin(HttpServletRequest request) {
+		String origin = request.getHeader("Origin");
+		if (origin == null) return true;    // same-origin form posts and old browsers; SameSite=Lax still applies
+		try {
+			URI o = URI.create(origin);
+			String host = request.getHeader("Host");
+			String originHost = o.getHost() + (o.getPort() == -1 ? "" : ":" + o.getPort());
+			return host != null && host.equalsIgnoreCase(originHost);
+		}
+		catch (Exception e) {
+			return false;
+		}
+	}
+
+	private static boolean wantsPage(HttpServletRequest request) {
+		String accept = request.getHeader("Accept");
+		return accept != null && accept.contains("text/html");
 	}
 
 	private static String bearerKey(HttpServletRequest request) {
@@ -180,6 +237,6 @@ public class AuthFilter extends OncePerRequestFilter {
 		response.setStatus(status);
 		response.setContentType("application/json");
 		response.setCharacterEncoding("UTF-8");
-		response.getWriter().write(new Gson().toJson(java.util.Map.of("error", message)));
+		response.getWriter().write(new Gson().toJson(Map.of("error", message)));
 	}
 }

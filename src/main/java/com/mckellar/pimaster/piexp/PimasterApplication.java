@@ -106,15 +106,6 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     @Autowired
     private AccessStore accessStore;
 
-    // How this server checks logins, for the web client: the mode, whether viewing is open, and who is asking.
-    @GetMapping("/auth/config")
-    public Map<String,Object> GetAuthConfig(HttpServletRequest request) {
-    	Map<String,Object> result = new LinkedHashMap<String,Object>(authConfig.describe(accessStore));
-    	result.remove("access");
-    	Caller caller = Caller.of(request);
-    	result.put("caller", caller.kind());
-    	return(result);
-    }
 
     // set by the build (spring-boot-maven-plugin build-info); missing when run from an IDE
     @Autowired(required = false)
