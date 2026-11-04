@@ -1,5 +1,7 @@
 # cmo_server
 
+> Part of the [Private AI home camera system](https://github.com/markmckellar/cmo): this repo is the server. The other parts: [cmo_client](https://github.com/markmckellar/cmo_client) · [cmo_ollama](https://github.com/markmckellar/cmo_ollama) · [cmo_vue_client](https://github.com/markmckellar/cmo_vue_client).
+
 Server end for the motion cameras ("catcam"): the pet door Pi and the porch camera, both running
 cmo_watch from [cmo_client](https://github.com/markmckellar/cmo_client), record motion events and upload them here; the server stores them on
 disk and serves them, plus a web client (`src/main/resources/static/cmo_client/`), for
