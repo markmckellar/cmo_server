@@ -109,7 +109,10 @@ public class AuthFilter extends OncePerRequestFilter {
 		Log.info("refused {} {} for {} {}: {}", method, path, caller.kind(), caller.id(), problem);
 		if ((notSignedIn || (caller.isPerson() && !caller.isApprovedPerson())) && "GET".equals(method) && wantsPage(request)) {
 			String next = request.getRequestURI() + (request.getQueryString() == null ? "" : "?" + request.getQueryString());
-			response.sendRedirect(request.getContextPath() + "/signin.html?next=" + URLEncoder.encode(next, StandardCharsets.UTF_8));
+			// a relative Location: sendRedirect would make it absolute with this server's own scheme, which is
+			// http behind Caddy even though the browser came in over https
+			response.setStatus(HttpServletResponse.SC_FOUND);
+			response.setHeader("Location", request.getContextPath() + "/signin.html?next=" + URLEncoder.encode(next, StandardCharsets.UTF_8));
 			return;
 		}
 		if (notSignedIn) response.setHeader("WWW-Authenticate", "Bearer");
