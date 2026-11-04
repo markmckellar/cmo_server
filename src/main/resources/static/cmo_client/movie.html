@@ -159,6 +159,11 @@
         const moviePath = params.get('movie_path') || '';
         const time = params.get('time') || '';
 
+        // Old Telegram alerts link here. Open the event in the web app instead: it signs in when needed and
+        // has the labels and relabel; this page can't play a movie the server refuses to a signed-out viewer.
+        const event = moviePath.match(/^\/catcam\/data\/([^/]+)\/(\d{8})\/([^/]+)\//);
+        if (event) location.replace('index.html#/event/' + event.slice(1).map(encodeURIComponent).join('/'));
+
         // camera from the path: /catcam/data/<camera>/<date>/<event>/me_movie.mp4, e.g. porch_cam -> "Porch cam"
         const camera = (moviePath.match(/^\/catcam\/data\/([^/]+)\//) || [])[1] || '';
         const cameraName = camera.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
