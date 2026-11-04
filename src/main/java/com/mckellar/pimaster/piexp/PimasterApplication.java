@@ -31,6 +31,9 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import com.mckellar.pimaster.piexp.auth.AccessStore;
+import com.mckellar.pimaster.piexp.auth.AuthConfig;
+import com.mckellar.pimaster.piexp.auth.Caller;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageProperties;
 import com.mckellar.pimaster.piexp.fileioservice.FileStorageService;
 import com.mckellar.pimaster.piexp.fileioservice.UploadFileResponse;
@@ -96,6 +99,22 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     @Autowired
     private FileStorageService fileStorageService;
+
+    @Autowired
+    private AuthConfig authConfig;
+
+    @Autowired
+    private AccessStore accessStore;
+
+    // How this server checks logins, for the web client: the mode, whether viewing is open, and who is asking.
+    @GetMapping("/auth/config")
+    public Map<String,Object> GetAuthConfig(HttpServletRequest request) {
+    	Map<String,Object> result = new LinkedHashMap<String,Object>(authConfig.describe(accessStore));
+    	result.remove("access");
+    	Caller caller = Caller.of(request);
+    	result.put("caller", caller.kind());
+    	return(result);
+    }
 
     // set by the build (spring-boot-maven-plugin build-info); missing when run from an IDE
     @Autowired(required = false)
@@ -349,9 +368,11 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     public List<MeGroup> GetMeGroups(HttpServletRequest request) throws IOException  {
         Log.info("/catcam/megroups");
 
+    	Caller caller = Caller.of(request);
     	List<MeGroup> list = new ArrayList<MeGroup>();
     	for (File f : subDirsNewestFirst(uploadRoot().toFile()))
-    		list.add(new MeGroup(f.getName()));
+    		if(caller.canSee(f.getName()))    // only the caller's cameras
+    			list.add(new MeGroup(f.getName()));
     	Collections.reverse(list);    // A to Z
 
         Log.info("GetMeGroups: list="+list.size());
@@ -520,13 +541,16 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     @GetMapping({"/catcam/latest", "/catcam/latest/{meGroup}"})
     public List<MeEvent> GetLatest(
     		@PathVariable(required = false) String meGroup,
-    		@RequestParam(defaultValue = "10") int n) {
+    		@RequestParam(defaultValue = "10") int n,
+    		HttpServletRequest request) {
+    	Caller caller = Caller.of(request);
     	Log.info("/catcam/latest group="+meGroup+" n="+n);
     	n = capRecords(n);
     	acquireEventListPermit();
     	try {
     		List<File> groups = (meGroup == null)
-    				? subDirsNewestFirst(uploadRoot().toFile())
+    				? subDirsNewestFirst(uploadRoot().toFile()).stream()
+    						.filter(g -> caller.canSee(g.getName())).collect(Collectors.toList())    // only the caller's cameras
     				: Collections.singletonList(uploadDir(meGroup));
     		List<MeEvent> list = new ArrayList<MeEvent>();
     		for (File groupDir : groups)
@@ -586,6 +610,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	result.put("free_bytes", root.getUsableSpace());
     	result.put("total_bytes", root.getTotalSpace());
     	result.put("groups", groups);
+    	result.put("auth", authConfig.describe(accessStore));
     	return(result);
     }
 

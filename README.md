@@ -42,6 +42,45 @@ Any property can be overridden at launch without rebuilding, e.g.:
 java -jar target/cmo_server-*.jar --server.port=9191 --file.upload-dir=/data/catcam
 ```
 
+## Logins and device keys
+
+Every request goes through one filter (`auth/AuthFilter.java`) that works out who is calling and what they may do.
+The rules live there, and nowhere else.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `cmo.auth.mode` | `google` | `google`: cameras and scripts need a device key; people will sign in with Google (coming). `open`: no logins, for a server at home; only requests from the home network are served, and anything that came through a proxy (Caddy adds `X-Forwarded-For`) is refused. The server won't start in open mode on a specific public address. |
+| `cmo.auth.public-read` | `false` | Temporary: anyone may view until Google sign-in exists. Uploading, deleting and relabeling still need a key or a login. |
+| `cmo.auth.access-file` | `local/access.json` | Accounts and device keys (never in git). Read again whenever it changes, so adding a device needs no restart. |
+
+**Who may do what (google mode):**
+
+| Caller | May |
+|---|---|
+| Anyone | `GET /`, `/catcam/version`, `/catcam/health`, `/auth/config`, the web app's files under `/cmo_client/` |
+| Camera device | Upload to its own cameras (`POST /uploadme/{its camera}/...`) and the public paths; nothing else |
+| Reader device (scripts) | View its account's cameras (lists show only those) |
+| Person (signed in, coming) | View their account's cameras, relabel and delete events there |
+
+Cameras and scripts send `Authorization: Bearer <key>`. An open-mode server ignores the key, so the same camera
+settings work against a server at home and one in the cloud.
+
+**access.json:**
+
+```json
+{
+  "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "cameras": ["pet_door", "porch_cam"]} ],
+  "devices": [
+    {"id": "pet_door_pi", "account": "home", "role": "camera", "cameras": ["pet_door"], "key_hashes": ["sha256:..."]},
+    {"id": "ada_scripts", "account": "home", "role": "reader", "key_hashes": ["sha256:..."]}
+  ]
+}
+```
+
+**A new key:** `./new_device_key.bash <device-id>` prints the key (once) and its hash. The key goes on the device
+only; the hash goes in the device's `key_hashes`. A device may have two hashes, so a key can be changed without
+downtime: add the new hash, update the device, then remove the old hash. The server stores only hashes.
+
 ## Web client
 
 The bundled client is served at `http://<host>:9090/cmo_client/index.html`.

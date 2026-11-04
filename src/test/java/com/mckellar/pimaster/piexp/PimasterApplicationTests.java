@@ -33,7 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 // Same package as PimasterApplication, so @SpringBootTest finds its configuration.
 // Uploads go under target/ so a test run never touches real event data.
-@SpringBootTest(properties = "file.upload-dir=target/test-uploads")
+@SpringBootTest(properties = {"file.upload-dir=target/test-uploads", "cmo.auth.mode=open"})
 @AutoConfigureMockMvc
 class PimasterApplicationTests {
 
