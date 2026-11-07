@@ -24,6 +24,7 @@
     a { color: var(--accent); }
     ul { margin: 6px 0; padding-left: 20px; }
     #msg { min-height: 1.5em; }
+    input[type=search] { font: inherit; width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
   </style>
 </head>
 <body>
@@ -34,6 +35,13 @@
   </header>
   <p id="msg" class="muted"></p>
   <section id="body"></section>
+  <section id="people" hidden>
+    <h2>People</h2>
+    <p class="muted">Move someone to another household, e.g. a friend you've decided to give both cameras. Nobody can ask for
+      this in the app; they ask you.</p>
+    <input id="find" type="search" placeholder="Search by email" autocomplete="off" aria-label="Search people by email" />
+    <div id="found"></div>
+  </section>
   <p><a href="/cmo_client/index.html">Back to the cameras</a></p>
 </main>
 <script>
@@ -58,19 +66,42 @@
     if (a.animals_only) l.push('animals only');
     return l.length ? ' · ' + l.join(', ') : '';
   }
-  function accountPicker(id) {
-    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '"' + (a === safest() ? ' selected' : '') + '>' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')' + limits(a) + '</option>').join('') + '</select>';
+  // selected: the household to start on (default: the most limited one)
+  function accountPicker(id, selected) {
+    const start = selected ?? safest()?.id;
+    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '"' + (a.id === start ? ' selected' : '') + '>' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')' + limits(a) + '</option>').join('') + '</select>';
   }
   document.addEventListener('click', ev => {
     const b = ev.target.closest('button[data-act]');
     if (!b) return;
     if (b.dataset.act === 'approve') approve(b.dataset.picker, b.dataset.email);
+    else if (b.dataset.act === 'move') move(b.dataset.picker, b.dataset.email, b.dataset.from);
     else if (b.dataset.act === 'reject') reject(b.dataset.email);
   });
   async function approve(i, email) {
     const account = document.getElementById('acct-' + i).value;
     try { await post('/auth/admin/approve', { email, account }); msg(email + ' approved into ' + account + '.'); load(); } catch (e) { msg('Failed: ' + e.message); }
   }
+  // moving a member is the same call as approving: everyone belongs to one household
+  async function move(i, email, from) {
+    const account = document.getElementById('acct-' + i).value;
+    if (account === from) { msg(email + ' is already in ' + from + '.'); return; }
+    const to = accounts.find(a => a.id === account);
+    if (!confirm('Move ' + email + ' from ' + from + ' to ' + account + ' (' + to.cameras.join(', ') + limits(to) + ')?')) return;
+    try { await post('/auth/admin/approve', { email, account }); msg(email + ' moved to ' + account + '.'); load(); } catch (e) { msg('Failed: ' + e.message); }
+  }
+  // the members of every household that match the search; nobody until something is typed
+  function showPeople() {
+    const q = document.getElementById('find').value.trim().toLowerCase();
+    const people = q ? accounts.flatMap(a => a.members.map(m => ({ email: m, from: a.id }))).filter(p => p.email.toLowerCase().includes(q)) : [];
+    document.getElementById('found').innerHTML = !q ? '' : people.length ? people.map((p, i) =>
+      '<div class="card"><div class="who"><b>' + esc(p.email) + '</b><span class="muted">now in ' + esc(p.from) + '</span></div>' +
+      '<div class="actions">' + accountPicker('m' + i, p.from) + '<button data-act="move" data-picker="m' + i + '" data-email="' + esc(p.email) +
+      '" data-from="' + esc(p.from) + '">Move</button></div></div>').join('')
+      : '<p class="muted">Nobody matches. People show up here once they have signed in and been approved.</p>';
+  }
+  document.getElementById('find').addEventListener('input', showPeople);
+
   async function reject(email) {
     if (!confirm('Turn away ' + email + '? They won\'t be asked about again.')) return;
     try { await post('/auth/admin/reject', { email }); msg(email + ' turned away.'); load(); } catch (e) { msg('Failed: ' + e.message); }
@@ -99,6 +130,8 @@
       '<div class="card"><div class="who">' + esc(e) + '</div><div class="actions">' + accountPicker('r' + i) +
       '<button data-act="approve" data-picker="r' + i + '" data-email="' + esc(e) + '">Let in after all</button></div></div>').join('');
     document.getElementById('body').innerHTML = h;
+    document.getElementById('people').hidden = false;
+    showPeople();
   }
   load().catch(e => msg('Couldn\'t reach the server.'));
 </script>
