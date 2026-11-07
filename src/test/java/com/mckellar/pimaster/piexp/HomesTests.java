@@ -115,6 +115,13 @@ class HomesTests {
 	void homePlusAnEventTypeOnAnotherCamera() throws Exception {
 		Cookie gran = signIn("gran");
 		sees(gran, ev("0004"), ev("0005"), ev("0001"));    // all of her porch, and only the cat from the pet door
+		// the filter buttons she gets per camera: anything on her porch, only cats on the pet door
+		mvc.perform(get("/catcam/megroups").cookie(gran))
+				.andExpect(jsonPath("$[?(@.meGroup == 'her_porch')].labels").value(org.hamcrest.Matchers.contains((Object) null)))
+				.andExpect(jsonPath("$[?(@.meGroup == 'pet_door')].labels[*]").value(org.hamcrest.Matchers.contains("cat")))
+				.andExpect(jsonPath("$[*].meGroup", containsInAnyOrder("her_porch", "pet_door")));
+		mvc.perform(get("/catcam/search?howMayRecords=20&minimumDuration=0&labels=person&cameras=pet_door").cookie(gran))
+				.andExpect(jsonPath("$.length()").value(0));
 		mvc.perform(get("/catcam/event/pet_door/20261101/" + ev("0002")).cookie(gran)).andExpect(status().isNotFound());
 		mvc.perform(get("/catcam/data/pet_door/20261101/" + ev("0002") + "/me_rep_image.jpg").cookie(gran)).andExpect(status().isNotFound());
 		mvc.perform(get("/catcam/latest/porch_cam").cookie(gran)).andExpect(status().isForbidden());
@@ -126,6 +133,9 @@ class HomesTests {
 	void worldGrantWithAnEventTypeReachesEveryHomeAndNewCameras() throws Exception {
 		Cookie fan = signIn("fan");
 		sees(fan, ev("0001"), ev("0004"), ev("0006"));    // animals from every home, and from the camera in no home
+		mvc.perform(get("/catcam/megroups").cookie(fan))
+				.andExpect(jsonPath("$[*].labels[*]").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.in(java.util.List.of("cat", "dog", "raccoon")))))
+				.andExpect(jsonPath("$[0].hidden[*]").value(containsInAnyOrder("delivery", "legs", "person")));
 		mvc.perform(get("/catcam/search?howMayRecords=20&minimumDuration=0&labels=person").cookie(fan)).andExpect(jsonPath("$.length()").value(0));
 		mvc.perform(get("/catcam/event/her_porch/20261101/" + ev("0005")).cookie(fan)).andExpect(status().isNotFound());
 		mvc.perform(get("/auth/config").cookie(fan)).andExpect(jsonPath("$.animals_only").value(true))

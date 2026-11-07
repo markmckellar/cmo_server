@@ -136,16 +136,22 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return(result);
     }
 
-    // A camera, and the home it's in (for a home picker in the web app, later)
+    // A camera, the home it's in (for a home picker in the web app, later), and what this caller can find on it:
+    // labels (null: any) and hidden (labels no clip they see there has), so the web app offers only the filter
+    // buttons their grants allow
     class MeGroup {
       	public String meGroup;
       	public String home;
       	public String homeName;
+      	public List<String> labels;
+      	public List<String> hidden;
 
-    	public MeGroup(String meGroup, String home, String homeName) {
+    	public MeGroup(String meGroup, String home, String homeName, java.util.Set<String> labels, java.util.Set<String> hidden) {
     		this.meGroup = meGroup;
     		this.home = home;
     		this.homeName = homeName;
+    		this.labels = labels == null ? null : labels.stream().sorted().toList();
+    		this.hidden = hidden.stream().sorted().toList();
     	}
     }
 
@@ -534,7 +540,8 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	List<MeGroup> list = new ArrayList<MeGroup>();
     	for (File f : subDirsNewestFirst(uploadRoot().toFile()))
     		if(caller.canSee(f.getName()))    // only the caller's cameras
-    			list.add(new MeGroup(f.getName(), accessStore.homeOf(f.getName()), accessStore.homeName(accessStore.homeOf(f.getName()))));
+    			list.add(new MeGroup(f.getName(), accessStore.homeOf(f.getName()), accessStore.homeName(accessStore.homeOf(f.getName())),
+    					caller.access().shownLabels(f.getName()), caller.access().hiddenLabels(f.getName())));
     	Collections.reverse(list);    // A to Z
 
         Log.info("GetMeGroups: list="+list.size());

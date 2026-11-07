@@ -97,6 +97,26 @@ class AccessTests {
 	}
 
 	@Test
+	void filterButtonsPerCamera() {
+		// the whole porch, animals only on the pet door, cats only from grandma's
+		Access a = of(new Grant(Level.CAMERA, "porch_cam", Rule.EVERYTHING), new Grant(Level.CAMERA, "pet_door", Rule.ANIMALS_ONLY),
+				new Grant(Level.HOME, "grandma", new Rule(Set.of("cat"), null)));
+		assertNull(a.shownLabels("porch_cam"));
+		assertEquals(Set.of(), a.hiddenLabels("porch_cam"));
+		assertEquals(Set.of("cat", "dog", "raccoon"), a.shownLabels("pet_door"));
+		assertEquals(Access.PEOPLE, a.hiddenLabels("pet_door"));
+		assertEquals(Set.of("cat"), a.shownLabels("grandma_porch"));
+		assertEquals(Set.of(), a.shownLabels("somebody_elses"), "no grant: nothing to find");
+		// two grants on one camera: a label is hidden only if both hide it, shown if either shows it
+		Access b = of(new Grant(Level.CAMERA, "pet_door", new Rule(Set.of("cat"), Set.of("person"))),
+				new Grant(Level.HOME, "ours", new Rule(Set.of("dog"), Set.of("person", "delivery"))));
+		assertEquals(Set.of("cat", "dog"), b.shownLabels("pet_door"));
+		assertEquals(Set.of("person"), b.hiddenLabels("pet_door"));
+		assertNull(Access.EVERYTHING.shownLabels("x"));
+		assertEquals(Set.of(), Access.EVERYTHING.hiddenLabels("x"));
+	}
+
+	@Test
 	void everythingAndNothing() {
 		assertTrue(Access.EVERYTHING.mayView("x", null));
 		assertFalse(Access.NOTHING.canSee("x"));

@@ -167,6 +167,33 @@ public final class Access {
 		return out;
 	}
 
+	/**
+	 * For the web app's filter buttons on one camera: the labels the caller can find there (null: any), from the
+	 * grants covering it; empty if none covers it.
+	 */
+	public Set<String> shownLabels(String camera) {
+		if (grants == null) return null;
+		Set<String> out = new LinkedHashSet<>();
+		for (Grant g : grants) {
+			if (!g.covers(camera, homeOf)) continue;
+			if (g.rule().show() == null) return null;
+			out.addAll(g.rule().show());
+		}
+		return out;
+	}
+
+	/** The labels no clip on this camera may have for this caller (hidden by every grant covering it). */
+	public Set<String> hiddenLabels(String camera) {
+		if (grants == null) return Set.of();
+		Set<String> out = null;
+		for (Grant g : grants) {
+			if (!g.covers(camera, homeOf)) continue;
+			if (out == null) out = new LinkedHashSet<>(g.rule().hide());
+			else out.retainAll(g.rule().hide());
+		}
+		return out == null ? Set.of() : out;
+	}
+
 	/** For the web app: is every clip this caller sees free of people (so "Hide people" means nothing)? */
 	public boolean hidesPeople() {
 		if (grants == null || grants.isEmpty()) return false;
