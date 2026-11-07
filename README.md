@@ -121,6 +121,12 @@ Motion events are stored under the upload directory as:
 
 An unknown camera or date gives an empty list, not an error.
 
+`me_data.json` from current cameras keeps only the first and last `me_delta_array` entries and has the frame
+count in `me_frame_count`. Older pet door events had one entry per frame (up to ~650 KB a file);
+[`tools/slim_me_data.py`](tools/slim_me_data.py) rewrites them in the slim form and adds a `me_slimmed` note
+(when, and how many entries were removed). It was run on cmoserver01 on 2026-11-07 (3,891 files, 763 MB to
+4 MB; originals in `~/me_data_before_slim_20261107.tar.gz` there). ada's copy is still in the old, full form.
+
 ## Endpoints
 
 All examples assume the server is at `http://localhost:9090`.
