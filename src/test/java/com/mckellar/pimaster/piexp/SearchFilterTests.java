@@ -94,6 +94,29 @@ class SearchFilterTests {
 	}
 
 	@Test
+	void resultsCarryTheirLabels() throws Exception {
+		mvc.perform(get("/catcam/search/pet_door?howMayRecords=1&minimumDuration=0&labels=raccoon"))
+				.andExpect(jsonPath("$[0].me_ollama.raccoon").value(true));
+	}
+
+	@Test
+	void aChangedClassificationIsSeenRightAway() throws Exception {
+		mvc.perform(get("/catcam/search/pet_door?howMayRecords=10&minimumDuration=0&labels=dog"))    // nothing yet; labels now remembered
+				.andExpect(jsonPath("$.length()").value(0));
+		java.nio.file.Path f = Paths.get("target/filter-uploads/pet_door/20261102/20261102_010000_0002/me_ollama.json");
+		String before = java.nio.file.Files.readString(f);
+		try {
+			java.nio.file.Files.writeString(f, "{\"cat\": true, \"dog\": true, \"person\": false}");
+			f.toFile().setLastModified(System.currentTimeMillis() + 5000);
+			expect("&labels=dog", "20261102_010000_0002");
+		}
+		finally {
+			java.nio.file.Files.writeString(f, before);
+			f.toFile().setLastModified(System.currentTimeMillis() + 10000);
+		}
+	}
+
+	@Test
 	void badDateIsRefused() throws Exception {
 		mvc.perform(get("/catcam/search/pet_door?howMayRecords=10&minimumDuration=0&from=yesterday")).andExpect(status().isBadRequest());
 	}

@@ -254,7 +254,46 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     // May this caller see this event? Only animals-only callers are limited, so others don't pay for the read.
     private boolean mayView(Caller caller, File eventDir) {
-    	return(!caller.animalsOnly() || caller.mayView(ollamaLabels(readOllama(eventDir))));
+    	return(!caller.animalsOnly() || caller.mayView(cachedLabels(eventDir)));
+    }
+
+    // The labels of events already read, for searches: a raccoon search reads ~1,500 events to find 8, and
+    // reading and parsing every me_ollama.json each time is most of its cost. An entry is used only while the
+    // file's time and size are unchanged, so a new classification (from the web app, a re-run of the AI or a
+    // hand edit) is read again.
+    private record CachedLabels(long modified, long size, Map<String,Object> labels) {}
+    private final java.util.concurrent.ConcurrentHashMap<String,CachedLabels> labelCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String,Object> NO_LABELS_FILE = Collections.emptyMap();
+
+    // An event's labels (me_ollama.json without its backups), or null if it has none. Don't change the map.
+    private Map<String,Object> cachedLabels(File eventDir) {
+    	File f = new File(eventDir, "me_ollama.json");
+    	long modified = f.lastModified(), size = f.length();    // 0 and 0 if the file is missing
+    	String key = f.getPath();
+    	CachedLabels c = labelCache.get(key);
+    	if(c == null || c.modified() != modified || c.size() != size) {
+    		Map<String,Object> labels = modified == 0 ? null : ollamaLabels(readOllama(eventDir));
+    		c = new CachedLabels(modified, size, labels == null ? NO_LABELS_FILE : Collections.unmodifiableMap(labels));
+    		labelCache.put(key, c);
+    	}
+    	return(c.labels() == NO_LABELS_FILE ? null : c.labels());
+    }
+
+    // Read every event's labels once at startup, in the background, so the first search after a restart is
+    // as quick as the rest
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void warmLabelCache() {
+    	Thread t = new Thread(() -> {
+    		long start = System.nanoTime();
+    		for (File camera : subDirsNewestFirst(uploadRoot().toFile()))
+    			for (File date : subDirsNewestFirst(camera))
+    				for (File event : subDirsNewestFirst(date))
+    					cachedLabels(event);
+    		Log.info("label cache warmed: " + labelCache.size() + " events in " + (System.nanoTime() - start) / 1000000 + " ms");
+    	}, "label-cache-warmer");
+    	t.setDaemon(true);
+    	t.setPriority(Thread.MIN_PRIORITY);
+    	t.start();
     }
 
     private static boolean longEnough(MeEvent meEvent, Double minimumDuration) {
@@ -309,7 +348,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     //   without  classifications the event must not have, e.g. person
     //   from, to dates (yyyyMMdd, inclusive); either may be left out
     // No filters at all lists the newest events. For the next page pass the me_name of the last event
-    // received as "before".
+    // received as "before". Each event comes with its me_ollama.json as "me_ollama".
 	@RequestMapping("/catcam/search/{meGroup}")
     public List<MeEvent> SearchMeEvents(
     		@PathVariable String meGroup,
@@ -395,14 +434,17 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
         		scanned++;
         		if(byLabel) {
-        			Map<String,Object> ollama = ollamaLabels(readOllama(eventDir));
+        			Map<String,Object> ollama = cachedLabels(eventDir);
         			if(!caller.mayView(ollama)) continue;
         			if(!matchesLabels(ollama, wanted, all, unwanted)) continue;
         		}
 
         		MeEvent meEvent = readMeData(eventDir);
-        		if(longEnough(meEvent, minimumDuration))
-        			list.add(brief ? briefMeEvent(meEvent) : meEvent);
+        		if(longEnough(meEvent, minimumDuration)) {
+        			if(brief) briefMeEvent(meEvent);
+        			meEvent.put("me_ollama", readOllama(eventDir));    // so the web app needn't ask for each event's labels
+        			list.add(meEvent);
+        		}
         	}
         }
 
