@@ -359,6 +359,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		@RequestParam(required = false) String without,
     		@RequestParam(required = false) String from,
     		@RequestParam(required = false) String to,
+    		@RequestParam(required = false) String cameras,
     		@RequestParam int howMayRecords,
     		@RequestParam Double minimumDuration,
     		@RequestParam(required = false) String before,
@@ -376,11 +377,12 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         	Caller caller = Caller.of(request);
         	if(meGroup != null)
         		return(searchMeEvents(meGroup, wanted, all, unwanted, from, to, howMayRecords, minimumDuration, before, brief, caller));
-        	// no camera: every camera the caller may see, merged newest first. Each camera gives up to a page, so the
+        	// no camera: every camera the caller may see (or those of them in "cameras", comma separated), merged newest first. Each camera gives up to a page, so the
         	// newest page overall is among them; event names start with date and time, so they sort across cameras.
+        	List<String> only = labelList(null, cameras);
         	List<MeEvent> merged = new ArrayList<MeEvent>();
         	for (File g : subDirsNewestFirst(uploadRoot().toFile()))
-        		if(caller.canSee(g.getName()) && !g.getName().contains("."))
+        		if(caller.canSee(g.getName()) && !g.getName().contains(".") && (only.isEmpty() || only.contains(g.getName().toLowerCase(Locale.ROOT))))
         			merged.addAll(searchMeEvents(g.getName(), wanted, all, unwanted, from, to, howMayRecords, minimumDuration, before, brief, caller));
         	merged.sort(Comparator.comparing((MeEvent e) -> String.valueOf(e.get("me_name"))).reversed());
         	return(merged.size() > howMayRecords ? new ArrayList<MeEvent>(merged.subList(0, howMayRecords)) : merged);

@@ -103,6 +103,9 @@ class HomesTests {
 				.andExpect(jsonPath("$[0].homeName").value("Our house"));
 		sees(me, ev("0001"), ev("0002"), ev("0003"));
 		mvc.perform(get("/catcam/latest/her_porch").cookie(me)).andExpect(status().isForbidden());
+		// asking for a camera they can't see by name doesn't add it
+		mvc.perform(get("/catcam/search?howMayRecords=20&minimumDuration=0&cameras=her_porch,pet_door").cookie(me))
+				.andExpect(jsonPath("$[*].me_name", containsInAnyOrder(ev("0001"), ev("0002"))));
 		mvc.perform(get("/catcam/data/her_porch/20261101/" + ev("0004") + "/me_rep_image.jpg").cookie(me)).andExpect(status().isForbidden());
 		mvc.perform(put("/catcam/event/pet_door/20261101/" + ev("0002") + "/classification").cookie(me)
 				.contentType(MediaType.APPLICATION_JSON).content("{\"person\": true}")).andExpect(status().isOk());

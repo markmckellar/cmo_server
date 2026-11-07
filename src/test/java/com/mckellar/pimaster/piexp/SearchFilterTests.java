@@ -153,6 +153,10 @@ class SearchFilterTests {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$[*].me_name", contains("20261104_010000_0005", "20261103_015000_0001", "20261103_010000_0003", "20261101_010000_0001")))
 				.andExpect(jsonPath("$[1].me_group").value("porch_cam"));
+		mvc.perform(get("/catcam/search?howMayRecords=10&minimumDuration=0&labels=raccoon&cameras=porch_cam"))
+				.andExpect(jsonPath("$[*].me_name", contains("20261103_015000_0001")));
+		mvc.perform(get("/catcam/search?howMayRecords=10&minimumDuration=0&labels=raccoon&cameras=pet_door,porch_cam"))
+				.andExpect(jsonPath("$.length()").value(4));
 		mvc.perform(get("/catcam/search?howMayRecords=2&minimumDuration=0&labels=raccoon&before=20261104_010000_0005"))
 				.andExpect(jsonPath("$[*].me_name", contains("20261103_015000_0001", "20261103_010000_0003")));
 	}
