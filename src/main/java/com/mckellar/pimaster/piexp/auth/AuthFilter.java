@@ -175,7 +175,10 @@ public class AuthFilter extends OncePerRequestFilter {
 			Set<String> cameras = new HashSet<>();
 			if (d.isCamera()) cameras.addAll(d.cameras());
 			else store.account(d.account()).ifPresent(a -> cameras.addAll(a.cameras()));
-			return new Caller("device", d.id(), d.account(), d.role(), Set.copyOf(cameras), false, null);
+			// a reader in a limited household (friends) is limited the same way as its people
+			Optional<AccessStore.Account> account = d.isCamera() ? Optional.empty() : store.account(d.account());
+			return new Caller("device", d.id(), d.account(), d.role(), Set.copyOf(cameras), false, null,
+					account.map(AccessStore.Account::viewOnly).orElse(false), account.map(AccessStore.Account::animalsOnly).orElse(false));
 		});
 	}
 
