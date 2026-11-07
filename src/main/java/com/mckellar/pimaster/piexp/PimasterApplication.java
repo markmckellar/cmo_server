@@ -51,6 +51,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -302,31 +303,77 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         return(list);
     }
 
-    // Search every date for events that ollama tagged with a label (cat, dog, person, ...), newest first.
-    // For the next page pass the me_name of the last event received as "before".
+    // Search events, newest first, with filters that stack like a search site's:
+    //   labels   classifications (comma separated; "label" is the old one-label form), e.g. raccoon,cat
+    //   match    "any" (default: at least one of the labels) or "all" (every label in the same event)
+    //   without  classifications the event must not have, e.g. person
+    //   from, to dates (yyyyMMdd, inclusive); either may be left out
+    // No filters at all lists the newest events. For the next page pass the me_name of the last event
+    // received as "before".
 	@RequestMapping("/catcam/search/{meGroup}")
     public List<MeEvent> SearchMeEvents(
     		@PathVariable String meGroup,
-    		@RequestParam String label,
+    		@RequestParam(required = false) String label,
+    		@RequestParam(required = false) String labels,
+    		@RequestParam(defaultValue = "any") String match,
+    		@RequestParam(required = false) String without,
+    		@RequestParam(required = false) String from,
+    		@RequestParam(required = false) String to,
     		@RequestParam int howMayRecords,
     		@RequestParam Double minimumDuration,
     		@RequestParam(required = false) String before,
     		@RequestParam(defaultValue = "false") boolean brief,
     		HttpServletRequest request) throws IOException  {
-        Log.info("/catcam/search label="+label+" before="+before);
+    	List<String> wanted = labelList(label, labels);
+    	List<String> unwanted = labelList(null, without);
+    	boolean all = "all".equalsIgnoreCase(match);
+    	from = dateParam("from", from);
+    	to = dateParam("to", to);
+        Log.info("/catcam/search labels="+wanted+" match="+(all ? "all" : "any")+" without="+unwanted+" from="+from+" to="+to+" before="+before);
         howMayRecords = capRecords(howMayRecords);
         acquireEventListPermit();
         try {
-        	return(searchMeEvents(meGroup, label, howMayRecords, minimumDuration, before, brief, Caller.of(request)));
+        	return(searchMeEvents(meGroup, wanted, all, unwanted, from, to, howMayRecords, minimumDuration, before, brief, Caller.of(request)));
         }
         finally {
         	eventListPermits.release();
         }
     }
 
-    private List<MeEvent> searchMeEvents(String meGroup, String label, int howMayRecords,
-    		Double minimumDuration, String before, boolean brief, Caller caller) {
+    // Labels from "a,b" (and the old single label), lower case, without blanks or repeats
+    private static List<String> labelList(String one, String many) {
+    	List<String> list = new ArrayList<String>();
+    	for (String part : ((one == null ? "" : one) + "," + (many == null ? "" : many)).split(",")) {
+    		String l = part.trim().toLowerCase(Locale.ROOT);
+    		if(!l.isEmpty() && !list.contains(l)) list.add(l);
+    	}
+    	return(list);
+    }
+
+    // A date filter: yyyyMMdd (dashes allowed, e.g. 2026-11-06), or null if not given
+    private static String dateParam(String name, String value) {
+    	if(value == null || value.isBlank()) return(null);
+    	String d = value.trim().replace("-", "");
+    	if(!d.matches("\\d{8}")) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, name + " must be a date like 20261106");
+    	return(d);
+    }
+
+    // Does an event with these labels pass the label filters?
+    static boolean matchesLabels(Map<String,Object> ollama, List<String> wanted, boolean all, List<String> unwanted) {
+    	for (String l : unwanted) if(hasOllamaLabel(ollama, l)) return(false);
+    	if(wanted.isEmpty()) return(true);
+    	for (String l : wanted) {
+    		boolean has = hasOllamaLabel(ollama, l);
+    		if(all && !has) return(false);
+    		if(!all && has) return(true);
+    	}
+    	return(all);
+    }
+
+    private List<MeEvent> searchMeEvents(String meGroup, List<String> wanted, boolean all, List<String> unwanted,
+    		String from, String to, int howMayRecords, Double minimumDuration, String before, boolean brief, Caller caller) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
+    	boolean byLabel = !wanted.isEmpty() || !unwanted.isEmpty() || caller.animalsOnly();
 
     	// event names start with their date (yyyyMMdd_...) so whole dates after "before" can be skipped
     	String beforeDate = (before != null && before.length() >= 8) ? before.substring(0,8) : null;
@@ -336,7 +383,10 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         for (File dateDir : subDirsNewestFirst(uploadDir(meGroup)))
         {
         	if(list.size()>=howMayRecords) break;
-        	if(beforeDate != null && dateDir.getName().compareTo(beforeDate) > 0) continue;
+        	String date = dateDir.getName();
+        	if(beforeDate != null && date.compareTo(beforeDate) > 0) continue;
+        	if(to != null && date.compareTo(to) > 0) continue;
+        	if(from != null && date.compareTo(from) < 0) break;    // newest first: every later folder is older still
 
         	for (File eventDir : subDirsNewestFirst(dateDir))
         	{
@@ -344,8 +394,11 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         		if(before != null && eventDir.getName().compareTo(before) >= 0) continue;
 
         		scanned++;
-        		Map<String,Object> ollama = readOllama(eventDir);
-        		if(!hasOllamaLabel(ollama,label) || !caller.mayView(ollamaLabels(ollama))) continue;
+        		if(byLabel) {
+        			Map<String,Object> ollama = ollamaLabels(readOllama(eventDir));
+        			if(!caller.mayView(ollama)) continue;
+        			if(!matchesLabels(ollama, wanted, all, unwanted)) continue;
+        		}
 
         		MeEvent meEvent = readMeData(eventDir);
         		if(longEnough(meEvent, minimumDuration))
@@ -354,7 +407,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         }
 
         long elapsedTime = (System.nanoTime() - startTime)/1000000;
-        Log.info("SearchMeEvents: label="+label+" list="+list.size()+" scanned="+scanned+" elapsedTime="+elapsedTime);
+        Log.info("SearchMeEvents: list="+list.size()+" scanned="+scanned+" elapsedTime="+elapsedTime);
 
         return(list);
     }
