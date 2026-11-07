@@ -74,6 +74,13 @@ class SignInTests {
 		when(google.check("bad-token")).thenReturn(Optional.empty());
 	}
 
+	@Test
+	void frontDoorOpensTheWebApp() throws Exception {
+		for (String p : new String[] {"/", "/cmo_client", "/cmo_client/"})
+			mvc.perform(get(p)).andExpect(status().isFound()).andExpect(header().string("Location", "/cmo_client/index.html"));
+		mvc.perform(get("/?event=x")).andExpect(header().string("Location", "/cmo_client/index.html?event=x"));
+	}
+
 	Cookie signIn(String who, String expectStatus) throws Exception {
 		MvcResult r = mvc.perform(post("/auth/google").contentType(MediaType.APPLICATION_JSON).content("{\"credential\": \"token-" + who + "\"}"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.status").value(expectStatus))

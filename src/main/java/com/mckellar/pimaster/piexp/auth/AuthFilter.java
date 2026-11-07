@@ -37,7 +37,7 @@ import com.google.gson.Gson;
  * cookies are ignored. Requests from anywhere else, or that came through a proxy, are refused.
  * </ul>
  * Always public: {@code /}, {@code /catcam/version}, {@code /catcam/health}, {@code /auth/config}, signing in and
- * out, the sign-in and admin pages and the web app's own files under {@code /cmo_client/}. A browser opening a
+ * out, the sign-in and admin pages and the web app's own files under {@code /cmo_client/} ({@code /} and the folder itself redirect to the app). A browser opening a
  * protected page while signed out is sent to the sign-in page, and back afterwards.
  */
 public class AuthFilter extends OncePerRequestFilter {
@@ -160,7 +160,7 @@ public class AuthFilter extends OncePerRequestFilter {
 		if (!"GET".equals(method) && !"HEAD".equals(method)) return false;
 		return path.equals("/") || path.equals("/catcam/version") || path.equals("/catcam/health")
 				|| path.equals("/auth/config") || path.equals("/favicon.ico") || path.equals("/signin.html")
-				|| path.equals("/admin.html") || path.startsWith("/cmo_client/");
+				|| path.equals("/admin.html") || path.equals("/cmo_client") || path.startsWith("/cmo_client/");
 	}
 
 	private static boolean isRead(String path) {

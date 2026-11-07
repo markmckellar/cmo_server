@@ -91,10 +91,16 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 	    http.csrf().disable();
 	}
 
-    @RequestMapping("/")
-    String home() {
-    	Log.info("I am at home");
-        return "Hello, World!";
+    /**
+     * The site's front door and the web app's folder open the web app, so a link doesn't need {@code index.html}.
+     * The Location is a path, not a full URL, so it stays https behind Caddy (see AuthFilter).
+     */
+    @GetMapping({"/", "/cmo_client", "/cmo_client/"})
+    ResponseEntity<Void> home(HttpServletRequest request) {
+    	String query = request.getQueryString();
+    	return ResponseEntity.status(HttpStatus.FOUND)
+    			.header(HttpHeaders.LOCATION, request.getContextPath() + "/cmo_client/index.html" + (query == null ? "" : "?" + query))
+    			.build();
     }
 
     @Autowired
