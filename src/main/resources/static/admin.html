@@ -69,7 +69,7 @@
   // selected: the household to start on (default: the most limited one)
   function accountPicker(id, selected) {
     const start = selected ?? safest()?.id;
-    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '"' + (a.id === start ? ' selected' : '') + '>' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')' + limits(a) + '</option>').join('') + '</select>';
+    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '"' + (a.id === start ? ' selected' : '') + '>' + esc(a.id) + ': ' + esc(a.summary ?? (a.cameras.join(', ') + limits(a))) + '</option>').join('') + '</select>';
   }
   document.addEventListener('click', ev => {
     const b = ev.target.closest('button[data-act]');
@@ -131,7 +131,7 @@
       '<button class="bad" data-act="reject" data-email="' + esc(p.email) + '">Reject</button></div></div>').join('')
       : '<p class="muted">Nobody is waiting.</p>';
     h += '<h2>Households</h2>' + d.accounts.map(a =>
-      '<div class="card"><div class="who"><b>' + esc(a.id) + '</b><span class="muted">cameras: ' + esc(a.cameras.join(', ')) + '</span>' +
+      '<div class="card"><div class="who"><b>' + esc(a.id) + '</b><span class="muted">' + esc(a.summary ?? ('cameras: ' + a.cameras.join(', ') + limits(a))) + '</span>' +
       '<ul>' + (a.members.length ? a.members.map(m => '<li>' + esc(m) + '</li>').join('') : '<li class="muted">no members</li>') + '</ul></div></div>').join('');
     if (d.rejected.length) h += '<h2>Turned away</h2>' + d.rejected.map((e, i) =>
       '<div class="card"><div class="who">' + esc(e) + '</div><div class="actions">' + accountPicker('r' + i) +

@@ -11,14 +11,44 @@ import java.util.Optional;
 public interface AccessStore {
 
 	/**
-	 * A household: the people (verified emails) and the cameras that belong to it. {@code viewOnly}: its people
-	 * may look but not change labels. {@code animalsOnly}: its people see only events labeled cat, dog or raccoon
-	 * and not person (e.g. a "friends" household for people Mark shares the link with).
+	 * An access group (a household, or e.g. "friends"): the people (verified emails) in it and what they may see.
+	 * {@code cameras} is the old way of saying which cameras; {@code grants} is everything it may see, on the
+	 * world / home / camera / event-type levels (see {@link Access}), with the cameras included. {@code viewOnly}:
+	 * its people may look but not change labels. {@code animalsOnly}: the event-type rule for grants that don't
+	 * set their own (only cats, dogs and raccoons, never a clip with a person in it).
 	 */
-	record Account(String id, List<String> members, List<String> cameras, boolean viewOnly, boolean animalsOnly) {
+	record Account(String id, List<String> members, List<String> cameras, boolean viewOnly, boolean animalsOnly,
+			List<Access.Grant> grants) {
 		public Account(String id, List<String> members, List<String> cameras) {
-			this(id, members, cameras, false, false);
+			this(id, members, cameras, false, false,
+					cameras.stream().map(c -> new Access.Grant(Access.Level.CAMERA, c, Access.Rule.EVERYTHING)).toList());
 		}
+	}
+
+	/** A home: its cameras. A camera not in any home is in {@link #DEFAULT_HOME}. */
+	record Home(String id, String name, List<String> cameras) {
+	}
+
+	/** The home of cameras that aren't listed in one (so a server with no homes set up is one home). */
+	String DEFAULT_HOME = "home";
+
+	List<Home> homes();
+
+	/** The home this camera is in ({@link #DEFAULT_HOME} if it isn't listed in one). */
+	default String homeOf(String camera) {
+		for (Home h : homes()) if (h.cameras().contains(camera)) return h.id();
+		return DEFAULT_HOME;
+	}
+
+	/** A home's name for people ("Home" for the default one). */
+	default String homeName(String id) {
+		for (Home h : homes()) if (h.id().equals(id)) return h.name() == null || h.name().isBlank() ? h.id() : h.name();
+		return DEFAULT_HOME.equals(id) ? "Home" : id;
+	}
+
+	/** What a group's people (and reader devices) may see. */
+	default Access access(Account a) {
+		return new Access(a.grants(), this::homeOf);
 	}
 
 	/**

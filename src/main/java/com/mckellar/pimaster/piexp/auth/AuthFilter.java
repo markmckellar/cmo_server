@@ -6,10 +6,8 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
@@ -90,7 +88,7 @@ public class AuthFilter extends OncePerRequestFilter {
 		}
 		else {
 			caller = sessions == null ? null : sessions.read(request).map(s -> callerForPerson(s.email(), s.name())).orElse(null);
-			if (caller == null) caller = publicRead ? new Caller("anonymous", null, null, null, null, false, null) : Caller.ANONYMOUS;
+			if (caller == null) caller = publicRead ? new Caller("anonymous", null, null, null, Access.EVERYTHING, false, null, false) : Caller.ANONYMOUS;
 		}
 		request.setAttribute(Caller.ATTRIBUTE, caller);
 
@@ -144,9 +142,9 @@ public class AuthFilter extends OncePerRequestFilter {
 
 		if ("GET".equals(method) && isRead(path)) {
 			if (caller.isCameraDevice()) return "camera devices may only upload";
-			if (caller.isPerson() && !caller.isApprovedPerson() && caller.cameras() != null) return "waiting for approval";
+			if (caller.isPerson() && !caller.isApprovedPerson() && !caller.access().everything()) return "waiting for approval";
 			boolean list = path.equals("/catcam/megroups") || path.equals("/catcam/latest") || path.equals("/catcam/search");
-			if (list) return caller.isAnonymous() && caller.cameras() != null && caller.cameras().isEmpty()
+			if (list) return caller.isAnonymous() && caller.access().nothing()
 					? "sign in or send a device key" : null;    // the controller lists only what the caller may see
 			if (camera == null || camera.isEmpty()) return "no camera in the path";
 			if (caller.canSee(camera)) return null;
@@ -172,13 +170,11 @@ public class AuthFilter extends OncePerRequestFilter {
 
 	private Optional<Caller> callerForKey(String key) {
 		return store.deviceForKey(key).map(d -> {
-			Set<String> cameras = new HashSet<>();
-			if (d.isCamera()) cameras.addAll(d.cameras());
-			else store.account(d.account()).ifPresent(a -> cameras.addAll(a.cameras()));
-			// a reader in a limited household (friends) is limited the same way as its people
-			Optional<AccessStore.Account> account = d.isCamera() ? Optional.empty() : store.account(d.account());
-			return new Caller("device", d.id(), d.account(), d.role(), Set.copyOf(cameras), false, null,
-					account.map(AccessStore.Account::viewOnly).orElse(false), account.map(AccessStore.Account::animalsOnly).orElse(false));
+			// a camera uploads to its own cameras; a reader sees what its group's people see (and is limited the same way)
+			if (d.isCamera()) return new Caller("device", d.id(), d.account(), d.role(), Access.cameras(d.cameras()), false, null, false);
+			Optional<AccessStore.Account> account = store.account(d.account());
+			return new Caller("device", d.id(), d.account(), d.role(), account.map(store::access).orElse(Access.NOTHING), false, null,
+					account.map(AccessStore.Account::viewOnly).orElse(false));
 		});
 	}
 
@@ -186,12 +182,11 @@ public class AuthFilter extends OncePerRequestFilter {
 	Caller callerForPerson(String email, String name) {
 		Optional<AccessStore.Account> account = store.accountForEmail(email);
 		if (store.isAdmin(email))
-			return new Caller("person", email, account.map(AccessStore.Account::id).orElse(null), "member", null, true, name);
+			return new Caller("person", email, account.map(AccessStore.Account::id).orElse(null), "member", Access.EVERYTHING, true, name, false);
 		if (account.isPresent())
-			return new Caller("person", email, account.get().id(), "member", Set.copyOf(account.get().cameras()), false, name,
-					account.get().viewOnly(), account.get().animalsOnly());
+			return new Caller("person", email, account.get().id(), "member", store.access(account.get()), false, name, account.get().viewOnly());
 		String role = store.isRejected(email) ? "rejected" : "pending";
-		return new Caller("person", email, null, role, publicRead ? null : Set.of(), false, name);
+		return new Caller("person", email, null, role, publicRead ? Access.EVERYTHING : Access.NOTHING, false, name, false);
 	}
 
 	/** A change request from a signed-in browser must come from this site (belt and braces with SameSite=Lax). */

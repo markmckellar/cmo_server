@@ -55,7 +55,9 @@ public class AuthController {
 			m.put("status", c.admin() ? "admin" : c.role());    // admin, member, pending, rejected
 			m.put("admin", c.admin());
 			m.put("view_only", c.viewOnly());
-			m.put("animals_only", c.animalsOnly());
+			m.put("animals_only", c.animalsOnly());    // every clip they see is free of people
+			m.put("labels", c.access().shownLabels());    // the only labels they can find; null: any
+			m.put("access", c.access().describe(store::homeName));
 		}
 		return m;
 	}
@@ -99,9 +101,13 @@ public class AuthController {
 		List<Map<String, Object>> accounts = new ArrayList<>();
 		for (AccessStore.Account a : store.accounts())
 			accounts.add(Map.of("id", a.id(), "members", a.members(), "cameras", a.cameras(),
-					"view_only", a.viewOnly(), "animals_only", a.animalsOnly()));
+					"view_only", a.viewOnly(), "animals_only", a.animalsOnly(),
+					"summary", store.access(a).describe(store::homeName) + (a.viewOnly() ? " · view only" : "")));
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("pending", store.pending());
+		List<Map<String, Object>> homes = new ArrayList<>();
+		for (AccessStore.Home h : store.homes()) homes.add(Map.of("id", h.id(), "name", store.homeName(h.id()), "cameras", h.cameras()));
+		m.put("homes", homes);
 		m.put("accounts", accounts);
 		m.put("rejected", store.rejected());
 		return m;

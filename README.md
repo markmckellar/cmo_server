@@ -65,9 +65,9 @@ The rules live there, and nowhere else.
 |---|---|
 | Anyone | `GET /`, `/catcam/version`, `/catcam/health`, `/auth/config`, sign in and out, `/signin.html`, `/admin.html` (the page; its data is admins only), the web app's files under `/cmo_client/` |
 | Camera device | Upload to its own cameras (`POST /uploadme/{its camera}/...`) and the public paths; nothing else |
-| Reader device (scripts) | View its account's cameras (lists show only those) |
+| Reader device (scripts) | View what its group may see (lists show only that) |
 | Person waiting for approval | Nothing yet; the sign-in page says they're waiting |
-| Household member | View and relabel their household's cameras |
+| Group member | View what their group's grants allow (see below); relabel unless the group is `view_only` |
 | Admin | See every camera, delete events, approve and reject people (`/admin.html`, `/auth/admin/*`) |
 
 **Signing in:** anyone with a Google account can sign in at `/signin.html`. The server checks Google's token
@@ -95,6 +95,39 @@ camera settings work against a server at home and one in the cloud.
   "rejected": []
 }
 ```
+
+**Homes and grants (who sees what):** access is granted on four levels, broadest first, by `auth/Access.java`
+(every "may they see this camera / this clip" decision goes through it):
+
+| Level | Covers | access.json |
+|---|---|---|
+| World | every camera in every home, including ones added later | `{"world": true}` |
+| Home | every camera in one home, including ones added to it later | `{"home": "ours"}` |
+| Camera | one camera | `{"camera": "pet_door"}` |
+| Event type | on any of the above: which clips | `"show": ["cat", "dog"]` (one must be true), `"hide": ["person", "legs", "delivery"]` (none may be), or `"animals_only": true` (cats, dogs, raccoons; no people) |
+
+A group (an entry in `accounts`) has a list of `grants`, and they add up: a clip may be seen if any grant covers its
+camera and lets it through. A rule that hides `person` also needs the AI to have said `person: false`, so an
+unclassified clip stays hidden. Homes are listed in `homes`; a camera not listed in one is in the home `home`, so a
+server with no homes is one home. The older form still works: `"cameras": [...]` is a camera grant for each, and a
+group's `"animals_only": true` is the rule for its grants that don't set one. A grant naming no level grants
+nothing. `view_only` (no relabeling) is per group. The Access page shows each group in words, e.g. "Pet door: cats,
+dogs, raccoons; no people · view only".
+
+```json
+{
+  "homes": [ {"id": "ours", "name": "Our house", "cameras": ["pet_door", "porch_cam"]},
+             {"id": "grandma", "name": "Grandma's", "cameras": ["her_porch"]} ],
+  "accounts": [
+    {"id": "us", "members": ["me@gmail.com"], "grants": [{"home": "ours"}]},
+    {"id": "friends", "members": [], "view_only": true, "cameras": ["pet_door"], "animals_only": true},
+    {"id": "grandma", "members": [], "grants": [{"home": "grandma"}, {"camera": "pet_door", "show": ["cat"]}]},
+    {"id": "fans", "members": [], "view_only": true, "grants": [{"world": true, "animals_only": true}]}
+  ]
+}
+```
+
+`/catcam/megroups` gives each camera's `home` and `homeName`, for a home picker in the web app later.
 
 **A new device key:** `./new_device_key.bash <device-id>` prints the key (once) and its hash. The key goes on the
 device only; the hash goes in the device's `key_hashes`. A device may have two hashes, so a key can be changed

@@ -28,14 +28,23 @@ import com.google.gson.annotations.SerializedName;
  * <pre>
  * {
  *   "admins":   ["someone@gmail.com"],
- *   "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "cameras": ["pet_door", "porch_cam"]},
- *                 {"id": "friends", "members": [], "cameras": ["pet_door"], "view_only": true, "animals_only": true} ],
+ *   "homes":    [ {"id": "mckellar", "name": "McKellar house", "cameras": ["pet_door", "porch_cam"]} ],
+ *   "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "grants": [{"home": "mckellar"}]},
+ *                 {"id": "friends", "members": [], "cameras": ["pet_door"], "view_only": true, "animals_only": true},
+ *                 {"id": "family", "members": [], "view_only": true,
+ *                  "grants": [{"camera": "porch_cam"}, {"camera": "pet_door", "show": ["cat"], "hide": ["person"]}]} ],
  *   "devices":  [ {"id": "pet_door_pi", "account": "home", "role": "camera", "cameras": ["pet_door"],
  *                  "key_hashes": ["sha256:..."]} ],
  *   "pending":  [ {"email": "new@gmail.com", "name": "New Person", "first_seen": "2026-11-04T01:00:00Z"} ],
  *   "rejected": ["spam@gmail.com"]
  * }
  * </pre>
+ *
+ * What a group may see is its grants (see {@link Access}): {@code {"world": true}}, {@code {"home": id}} or
+ * {@code {"camera": id}}, each with an optional event-type rule ({@code "show"}: labels of which one must be true;
+ * {@code "hide"}: labels none of which may be; or {@code "animals_only": true}). The old {@code "cameras"} list is
+ * a camera grant for each, and the group's {@code "animals_only"} the rule for grants that don't set one. A camera
+ * not listed in a home is in the home "home". A grant naming no level is ignored (it grants nothing).
  *
  * A device may have two key hashes, so its key can be changed without downtime. The file is read again
  * whenever it changes (hand edits need no restart); a file that doesn't parse leaves the last good one in use.
@@ -56,6 +65,23 @@ public class JsonAccessStore implements AccessStore {
 		boolean viewOnly;
 		@SerializedName("animals_only")
 		boolean animalsOnly;
+		List<FileGrant> grants;
+	}
+
+	private static class FileGrant {
+		Boolean world;
+		String home;
+		String camera;
+		List<String> show;
+		List<String> hide;
+		@SerializedName("animals_only")
+		Boolean animalsOnly;
+	}
+
+	private static class FileHome {
+		String id;
+		String name;
+		List<String> cameras = new ArrayList<>();
 	}
 
 	private static class FileDevice {
@@ -76,6 +102,7 @@ public class JsonAccessStore implements AccessStore {
 
 	private static class FileContents {
 		List<String> admins = new ArrayList<>();
+		List<FileHome> homes;
 		List<FileAccount> accounts = new ArrayList<>();
 		List<FileDevice> devices = new ArrayList<>();
 		List<FilePending> pending = new ArrayList<>();
@@ -281,7 +308,29 @@ public class JsonAccessStore implements AccessStore {
 	}
 
 	private static Account toAccount(FileAccount a) {
-		return new Account(a.id, listOf(a.members), listOf(a.cameras), a.viewOnly, a.animalsOnly);
+		Access.Rule base = a.animalsOnly ? Access.Rule.ANIMALS_ONLY : Access.Rule.EVERYTHING;
+		List<Access.Grant> grants = new ArrayList<>();
+		for (String c : listOf(a.cameras)) grants.add(new Access.Grant(Access.Level.CAMERA, c, base));
+		for (FileGrant g : a.grants == null ? List.<FileGrant>of() : a.grants) {
+			if (g == null) continue;
+			Access.Rule rule = g.show != null || g.hide != null
+					? new Access.Rule(g.show == null ? null : java.util.Set.copyOf(g.show), g.hide == null ? null : java.util.Set.copyOf(g.hide))
+					: Boolean.TRUE.equals(g.animalsOnly) ? Access.Rule.ANIMALS_ONLY : base;
+			if (Boolean.TRUE.equals(g.world)) grants.add(new Access.Grant(Access.Level.WORLD, null, rule));
+			else if (g.home != null && !g.home.isBlank()) grants.add(new Access.Grant(Access.Level.HOME, g.home.trim(), rule));
+			else if (g.camera != null && !g.camera.isBlank()) grants.add(new Access.Grant(Access.Level.CAMERA, g.camera.trim(), rule));
+			else Log.warn("account {}: a grant with no world, home or camera, ignored", a.id);
+		}
+		return new Account(a.id, listOf(a.members), listOf(a.cameras), a.viewOnly, a.animalsOnly, List.copyOf(grants));
+	}
+
+	@Override
+	public List<Home> homes() {
+		List<FileHome> hs = current().homes;
+		if (hs == null) return List.of();
+		List<Home> out = new ArrayList<>();
+		for (FileHome h : hs) if (h != null && h.id != null) out.add(new Home(h.id, h.name, listOf(h.cameras)));
+		return out;
 	}
 
 	private static List<String> listOf(List<String> l) {

@@ -136,11 +136,16 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return(result);
     }
 
+    // A camera, and the home it's in (for a home picker in the web app, later)
     class MeGroup {
       	public String meGroup;
+      	public String home;
+      	public String homeName;
 
-    	public MeGroup(String meGroup) {
+    	public MeGroup(String meGroup, String home, String homeName) {
     		this.meGroup = meGroup;
+    		this.home = home;
+    		this.homeName = homeName;
     	}
     }
 
@@ -252,9 +257,13 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	}
     }
 
-    // May this caller see this event? Only animals-only callers are limited, so others don't pay for the read.
+    // May this caller see this event (camera / date / event)? Its labels are read only when the caller's grants
+    // on that camera are limited by event type.
     private boolean mayView(Caller caller, File eventDir) {
-    	return(!caller.animalsOnly() || caller.mayView(cachedLabels(eventDir)));
+    	File date = eventDir.getParentFile();
+    	String camera = date == null || date.getParentFile() == null ? null : date.getParentFile().getName();
+    	if(!caller.canSee(camera)) return(false);
+    	return(!caller.needsLabels(camera) || caller.mayView(camera, cachedLabels(eventDir)));
     }
 
     // Which events have which labels, so a search for a rare label (raccoon) needn't read every event; see
@@ -438,7 +447,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		}
     	}
     	List<MeEvent> list = new ArrayList<MeEvent>();
-    	boolean byLabel = !wanted.isEmpty() || !unwanted.isEmpty() || caller.animalsOnly();
+    	boolean byLabel = !wanted.isEmpty() || !unwanted.isEmpty() || caller.needsLabels(meGroup);
 
     	// event names start with their date (yyyyMMdd_...) so whole dates after "before" can be skipped
     	String beforeDate = (before != null && before.length() >= 8) ? before.substring(0,8) : null;
@@ -461,7 +470,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         		scanned++;
         		if(byLabel) {
         			Map<String,Object> ollama = cachedLabels(eventDir);
-        			if(!caller.mayView(ollama)) continue;
+        			if(!caller.mayView(meGroup, ollama)) continue;
         			if(!matchesLabels(ollama, wanted, all, unwanted)) continue;
         		}
 
@@ -494,7 +503,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		File eventDir = uploadDir(meGroup, c[0], c[1]);
     		checked++;
     		Map<String,Object> labels = cachedLabels(eventDir);
-    		if(!eventDir.isDirectory() || !caller.mayView(labels) || !matchesLabels(labels, wanted, all, unwanted)) continue;
+    		if(!eventDir.isDirectory() || !caller.mayView(meGroup, labels) || !matchesLabels(labels, wanted, all, unwanted)) continue;
     		MeEvent meEvent = readMeData(eventDir);
     		if(longEnough(meEvent, minimumDuration)) {
     			if(brief) briefMeEvent(meEvent);
@@ -523,7 +532,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	List<MeGroup> list = new ArrayList<MeGroup>();
     	for (File f : subDirsNewestFirst(uploadRoot().toFile()))
     		if(caller.canSee(f.getName()))    // only the caller's cameras
-    			list.add(new MeGroup(f.getName()));
+    			list.add(new MeGroup(f.getName(), accessStore.homeOf(f.getName()), accessStore.homeName(accessStore.homeOf(f.getName()))));
     	Collections.reverse(list);    // A to Z
 
         Log.info("GetMeGroups: list="+list.size());
@@ -726,7 +735,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     		for (File eventDir : subDirsNewestFirst(dateDir)) {
     			if(list.size() >= n) return(list);
     			Map<String,Object> ollama = readOllama(eventDir);
-    			if(!caller.mayView(ollamaLabels(ollama))) continue;
+    			if(!caller.mayView(groupDir.getName(), ollamaLabels(ollama))) continue;
     			MeEvent meEvent = readMeData(eventDir);
     			if(meEvent == null) continue;
     			briefMeEvent(meEvent);
