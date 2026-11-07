@@ -177,6 +177,10 @@ class SignInTests {
 			mvc.perform(get("/catcam/data/pet_door/20261101/" + hidden + "/me_data.json").cookie(friend)).andExpect(status().isNotFound());
 		}
 		mvc.perform(get("/catcam/latest/neighbor_cam").cookie(friend)).andExpect(status().isForbidden());
+		// all cameras: still only the friend's camera and only the raccoon
+		mvc.perform(get("/catcam/search?howMayRecords=10&minimumDuration=0").cookie(friend))
+				.andExpect(jsonPath("$[*].me_name", org.hamcrest.Matchers.contains("20261101_120002_0002")));
+		mvc.perform(get("/catcam/search?howMayRecords=10&minimumDuration=0")).andExpect(status().isUnauthorized());
 
 		// view only
 		mvc.perform(put("/catcam/event/pet_door/20261101/20261101_120002_0002/classification").cookie(friend)

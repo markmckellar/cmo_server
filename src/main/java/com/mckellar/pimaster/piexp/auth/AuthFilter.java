@@ -145,7 +145,7 @@ public class AuthFilter extends OncePerRequestFilter {
 		if ("GET".equals(method) && isRead(path)) {
 			if (caller.isCameraDevice()) return "camera devices may only upload";
 			if (caller.isPerson() && !caller.isApprovedPerson() && caller.cameras() != null) return "waiting for approval";
-			boolean list = path.equals("/catcam/megroups") || path.equals("/catcam/latest");
+			boolean list = path.equals("/catcam/megroups") || path.equals("/catcam/latest") || path.equals("/catcam/search");
 			if (list) return caller.isAnonymous() && caller.cameras() != null && caller.cameras().isEmpty()
 					? "sign in or send a device key" : null;    // the controller lists only what the caller may see
 			if (camera == null || camera.isEmpty()) return "no camera in the path";
@@ -166,7 +166,7 @@ public class AuthFilter extends OncePerRequestFilter {
 
 	private static boolean isRead(String path) {
 		return path.equals("/catcam/megroups") || path.equals("/catcam/latest") || path.startsWith("/catcam/latest/")
-				|| path.startsWith("/catcam/meeventgroup/") || path.startsWith("/catcam/search/")
+				|| path.startsWith("/catcam/meeventgroup/") || path.equals("/catcam/search") || path.startsWith("/catcam/search/")
 				|| path.startsWith("/catcam/event/") || path.startsWith("/catcam/data/");
 	}
 

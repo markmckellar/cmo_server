@@ -37,6 +37,10 @@ class SearchFilterTests {
 		write("20261103", "20261103_020000_0004", CAT_AND_PERSON);
 		write("20261104", "20261104_010000_0005", RACCOON);
 		write("20261105", "20261105_010000_0006", "{\"cat\": true, \"person\": false, \"legs\": true}");
+		java.nio.file.Path porch = java.nio.file.Files.createDirectories(Paths.get("target/filter-uploads", "porch_cam", "20261103", "20261103_015000_0001"));
+		java.nio.file.Files.writeString(porch.resolve("me_data.json"), "{\"me_name\": \"20261103_015000_0001\", \"me_group\": \"porch_cam\", "
+				+ "\"me_event_group\": \"20261103\", \"me_time\": 5.0}");
+		java.nio.file.Files.writeString(porch.resolve("me_ollama.json"), "{\"raccoon\": true, \"person\": false}");
 	}
 
 	static void write(String date, String name, String ollama) throws IOException {
@@ -133,7 +137,7 @@ class SearchFilterTests {
 			Thread.sleep(50);
 		}
 		mvc.perform(get("/catcam/health")).andExpect(jsonPath("$.label_index.ready").value(true))
-				.andExpect(jsonPath("$.label_index.events").value(6));
+				.andExpect(jsonPath("$.label_index.events").value(7));
 		anyOfSeveralLabels();
 		allLabelsInTheSameEvent();
 		without();
@@ -141,6 +145,16 @@ class SearchFilterTests {
 		pagesWithBefore();
 		oldOneLabelFormStillWorks();
 		personAlsoMeansLegs();
+	}
+
+	@Test
+	void allCamerasMergedNewestFirst() throws Exception {
+		mvc.perform(get("/catcam/search?howMayRecords=10&minimumDuration=0&labels=raccoon"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[*].me_name", contains("20261104_010000_0005", "20261103_015000_0001", "20261103_010000_0003", "20261101_010000_0001")))
+				.andExpect(jsonPath("$[1].me_group").value("porch_cam"));
+		mvc.perform(get("/catcam/search?howMayRecords=2&minimumDuration=0&labels=raccoon&before=20261104_010000_0005"))
+				.andExpect(jsonPath("$[*].me_name", contains("20261103_015000_0001", "20261103_010000_0003")));
 	}
 
 	@Test
