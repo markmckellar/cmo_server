@@ -54,6 +54,8 @@ public class AuthController {
 			m.put("name", c.name());
 			m.put("status", c.admin() ? "admin" : c.role());    // admin, member, pending, rejected
 			m.put("admin", c.admin());
+			m.put("view_only", c.viewOnly());
+			m.put("animals_only", c.animalsOnly());
 		}
 		return m;
 	}
@@ -96,7 +98,8 @@ public class AuthController {
 	public Map<String, Object> requests() {
 		List<Map<String, Object>> accounts = new ArrayList<>();
 		for (AccessStore.Account a : store.accounts())
-			accounts.add(Map.of("id", a.id(), "members", a.members(), "cameras", a.cameras()));
+			accounts.add(Map.of("id", a.id(), "members", a.members(), "cameras", a.cameras(),
+					"view_only", a.viewOnly(), "animals_only", a.animalsOnly()));
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("pending", store.pending());
 		m.put("accounts", accounts);

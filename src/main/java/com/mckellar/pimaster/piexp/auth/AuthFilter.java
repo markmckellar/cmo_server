@@ -138,6 +138,7 @@ public class AuthFilter extends OncePerRequestFilter {
 			return caller.isPerson() && caller.admin() ? null : "only admins may delete events";
 		if (eventPath && "PUT".equals(method)) {
 			if (!caller.isApprovedPerson()) return caller.isPerson() ? "waiting for approval" : "only people may change events";
+			if (caller.viewOnly()) return "view only";
 			return caller.canSee(camera) ? null : "not your camera";
 		}
 
@@ -184,7 +185,8 @@ public class AuthFilter extends OncePerRequestFilter {
 		if (store.isAdmin(email))
 			return new Caller("person", email, account.map(AccessStore.Account::id).orElse(null), "member", null, true, name);
 		if (account.isPresent())
-			return new Caller("person", email, account.get().id(), "member", Set.copyOf(account.get().cameras()), false, name);
+			return new Caller("person", email, account.get().id(), "member", Set.copyOf(account.get().cameras()), false, name,
+					account.get().viewOnly(), account.get().animalsOnly());
 		String role = store.isRejected(email) ? "rejected" : "pending";
 		return new Caller("person", email, null, role, publicRead ? null : Set.of(), false, name);
 	}

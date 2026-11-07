@@ -28,7 +28,8 @@ import com.google.gson.annotations.SerializedName;
  * <pre>
  * {
  *   "admins":   ["someone@gmail.com"],
- *   "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "cameras": ["pet_door", "porch_cam"]} ],
+ *   "accounts": [ {"id": "home", "members": ["someone@gmail.com"], "cameras": ["pet_door", "porch_cam"]},
+ *                 {"id": "friends", "members": [], "cameras": ["pet_door"], "view_only": true, "animals_only": true} ],
  *   "devices":  [ {"id": "pet_door_pi", "account": "home", "role": "camera", "cameras": ["pet_door"],
  *                  "key_hashes": ["sha256:..."]} ],
  *   "pending":  [ {"email": "new@gmail.com", "name": "New Person", "first_seen": "2026-11-04T01:00:00Z"} ],
@@ -51,6 +52,10 @@ public class JsonAccessStore implements AccessStore {
 		String id;
 		List<String> members = new ArrayList<>();
 		List<String> cameras = new ArrayList<>();
+		@SerializedName("view_only")
+		boolean viewOnly;
+		@SerializedName("animals_only")
+		boolean animalsOnly;
 	}
 
 	private static class FileDevice {
@@ -275,7 +280,7 @@ public class JsonAccessStore implements AccessStore {
 	}
 
 	private static Account toAccount(FileAccount a) {
-		return new Account(a.id, listOf(a.members), listOf(a.cameras));
+		return new Account(a.id, listOf(a.members), listOf(a.cameras), a.viewOnly, a.animalsOnly);
 	}
 
 	private static List<String> listOf(List<String> l) {

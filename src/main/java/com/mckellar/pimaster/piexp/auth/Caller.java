@@ -14,8 +14,36 @@ import javax.servlet.http.HttpServletRequest;
  * @param cameras  the cameras this caller may see; null means every camera
  * @param admin    may approve people, see every camera and delete events
  * @param name     a person's display name (from Google), else null
+ * @param viewOnly    a person whose household may look but not change labels
+ * @param animalsOnly sees only events labeled cat, dog or raccoon and not person (see {@link #mayView})
  */
-public record Caller(String kind, String id, String account, String role, Set<String> cameras, boolean admin, String name) {
+public record Caller(String kind, String id, String account, String role, Set<String> cameras, boolean admin, String name,
+		boolean viewOnly, boolean animalsOnly) {
+
+	public Caller(String kind, String id, String account, String role, Set<String> cameras, boolean admin, String name) {
+		this(kind, id, account, role, cameras, admin, name, false, false);
+	}
+
+	/** The labels an animals-only caller may see; one of them must be true and "person" must be false. */
+	public static final Set<String> ANIMALS = Set.of("cat", "dog", "raccoon");
+
+	/**
+	 * May this caller see an event with these labels (its me_ollama.json, or null if it has none)? Always yes,
+	 * except for animals-only callers: then "person" must be false (not just missing) and an animal true, so an
+	 * event the AI never classified, or one with a person in it, stays hidden.
+	 */
+	public boolean mayView(java.util.Map<String, Object> labels) {
+		if (!animalsOnly) return true;
+		if (labels == null) return false;
+		Boolean person = null;
+		boolean animal = false;
+		for (java.util.Map.Entry<String, Object> e : labels.entrySet()) {
+			String k = e.getKey().toLowerCase(java.util.Locale.ROOT);
+			if (k.equals("person") && e.getValue() instanceof Boolean b) person = b;
+			if (ANIMALS.contains(k) && Boolean.TRUE.equals(e.getValue())) animal = true;
+		}
+		return Boolean.FALSE.equals(person) && animal;
+	}
 
 	public static final String ATTRIBUTE = Caller.class.getName();
 

@@ -67,7 +67,19 @@ class SignInTests {
 		}
 		Files.writeString(ACCESS, "{\"admins\": [\"boss@example.com\"],"
 				+ "\"accounts\": [{\"id\": \"home\", \"members\": [\"boss@example.com\"], \"cameras\": [\"pet_door\"]},"
-				+ "  {\"id\": \"neighbor\", \"members\": [], \"cameras\": [\"neighbor_cam\"]}]}");
+				+ "  {\"id\": \"neighbor\", \"members\": [], \"cameras\": [\"neighbor_cam\"]},"
+				+ "  {\"id\": \"friends\", \"members\": [], \"cameras\": [\"pet_door\"], \"view_only\": true, \"animals_only\": true}]}");
+		// more pet door events for the friends household: a raccoon (shown), a cat with a person (hidden), never classified (hidden)
+		String[][] more = {{"0002", "{\"person\": false, \"raccoon\": true, \"animal\": true}"},
+				{"0003", "{\"person\": true, \"cat\": true}"}, {"0004", null}};
+		for (String[] e : more) {
+			String name = "20261101_12000" + e[0].substring(3) + "_" + e[0];
+			Path dir = Files.createDirectories(UPLOADS.resolve("pet_door").resolve("20261101").resolve(name));
+			Files.writeString(dir.resolve("me_data.json"), "{\"me_name\": \"" + name + "\", \"me_group\": \"pet_door\", "
+					+ "\"me_event_group\": \"20261101\", \"me_time\": 1.0}");
+			Files.writeString(dir.resolve("me_rep_image.jpg"), "jpg");
+			if (e[1] != null) Files.writeString(dir.resolve("me_ollama.json"), e[1]);
+		}
 		reset(notifier);
 		for (String who : new String[] {"boss", "newbie", "spammer"})
 			when(google.check("token-" + who)).thenReturn(Optional.of(new GoogleSignIn.GoogleUser(who + "@example.com", who, "sub-" + who)));
@@ -128,6 +140,44 @@ class SignInTests {
 				.contentType(MediaType.APPLICATION_JSON).content("{\"cat\": false, \"dog\": true}")).andExpect(status().isOk());
 		mvc.perform(delete("/catcam/event/pet_door/20261101/20261101_120000_0001").cookie(newbie)).andExpect(status().isForbidden());
 		mvc.perform(get("/auth/config").cookie(newbie)).andExpect(jsonPath("$.status").value("member"));
+	}
+
+	@Test
+	void friendsSeeOnlyAnimalsAndMayNotRelabel() throws Exception {
+		Cookie friend = signIn("newbie", "pending");
+		Cookie boss = signIn("boss", "admin");
+		mvc.perform(post("/auth/admin/approve").cookie(boss).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\": \"newbie@example.com\", \"account\": \"friends\"}")).andExpect(status().isOk());
+		mvc.perform(get("/auth/config").cookie(friend)).andExpect(jsonPath("$.view_only").value(true))
+				.andExpect(jsonPath("$.animals_only").value(true));
+
+		// lists: only the raccoon (0001 has no "person" label, 0003 has a person, 0004 was never classified)
+		mvc.perform(get("/catcam/latest/pet_door").cookie(friend)).andExpect(status().isOk())
+				.andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].me_name").value("20261101_120002_0002"));
+		mvc.perform(get("/catcam/latest").cookie(friend)).andExpect(jsonPath("$.length()").value(1));
+		mvc.perform(get("/catcam/meeventgroup/pet_door/20261101?howMayRecords=10&startRecord=0&minimumDuration=0").cookie(friend))
+				.andExpect(jsonPath("$.length()").value(1));
+		mvc.perform(get("/catcam/search/pet_door?label=cat&howMayRecords=10&minimumDuration=0").cookie(friend))
+				.andExpect(jsonPath("$.length()").value(0));
+		mvc.perform(get("/catcam/search/pet_door?label=raccoon&howMayRecords=10&minimumDuration=0").cookie(friend))
+				.andExpect(jsonPath("$.length()").value(1));
+
+		// direct addresses: a hidden event and its files are not there
+		mvc.perform(get("/catcam/event/pet_door/20261101/20261101_120002_0002").cookie(friend)).andExpect(status().isOk());
+		mvc.perform(get("/catcam/data/pet_door/20261101/20261101_120002_0002/me_rep_image.jpg").cookie(friend)).andExpect(status().isOk());
+		for (String hidden : new String[] {"20261101_120003_0003", "20261101_120004_0004", "20261101_120000_0001"}) {
+			mvc.perform(get("/catcam/event/pet_door/20261101/" + hidden).cookie(friend)).andExpect(status().isNotFound());
+			mvc.perform(get("/catcam/data/pet_door/20261101/" + hidden + "/me_data.json").cookie(friend)).andExpect(status().isNotFound());
+		}
+		mvc.perform(get("/catcam/latest/neighbor_cam").cookie(friend)).andExpect(status().isForbidden());
+
+		// view only
+		mvc.perform(put("/catcam/event/pet_door/20261101/20261101_120002_0002/classification").cookie(friend)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"cat\": true}")).andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error").value("view only"));
+
+		// the admin still sees everything
+		mvc.perform(get("/catcam/latest/pet_door").cookie(boss)).andExpect(jsonPath("$.length()").value(4));
 	}
 
 	@Test

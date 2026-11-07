@@ -251,6 +251,11 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	}
     }
 
+    // May this caller see this event? Only animals-only callers are limited, so others don't pay for the read.
+    private boolean mayView(Caller caller, File eventDir) {
+    	return(!caller.animalsOnly() || caller.mayView(ollamaLabels(readOllama(eventDir))));
+    }
+
     private static boolean longEnough(MeEvent meEvent, Double minimumDuration) {
     	return(meEvent != null && meEvent.hasMeTime() && meEvent.getMeTime() > minimumDuration);
     }
@@ -268,7 +273,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         howMayRecords = capRecords(howMayRecords);
         acquireEventListPermit();
         try {
-        	return(readMeEvents(meGroup, meName, howMayRecords, startRecord, minimumDuration, brief));
+        	return(readMeEvents(meGroup, meName, howMayRecords, startRecord, minimumDuration, brief, Caller.of(request)));
         }
         finally {
         	eventListPermits.release();
@@ -277,7 +282,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     // The events of one date, newest first. startRecord counts event folders, read or not.
     private List<MeEvent> readMeEvents(String meGroup, String meName, int howMayRecords,
-    		int startRecord, Double minimumDuration, boolean brief) {
+    		int startRecord, Double minimumDuration, boolean brief, Caller caller) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
     	List<File> eventDirs = subDirsNewestFirst(uploadDir(meGroup, meName));
 
@@ -286,6 +291,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         {
         	// we got all we need :)
         	if(list.size()>=howMayRecords) break;
+        	if(!mayView(caller, eventDirs.get(i))) continue;
         	MeEvent meEvent = readMeData(eventDirs.get(i));
         	if(longEnough(meEvent, minimumDuration))
         		list.add(brief ? briefMeEvent(meEvent) : meEvent);
@@ -311,7 +317,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         howMayRecords = capRecords(howMayRecords);
         acquireEventListPermit();
         try {
-        	return(searchMeEvents(meGroup, label, howMayRecords, minimumDuration, before, brief));
+        	return(searchMeEvents(meGroup, label, howMayRecords, minimumDuration, before, brief, Caller.of(request)));
         }
         finally {
         	eventListPermits.release();
@@ -319,7 +325,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     }
 
     private List<MeEvent> searchMeEvents(String meGroup, String label, int howMayRecords,
-    		Double minimumDuration, String before, boolean brief) {
+    		Double minimumDuration, String before, boolean brief, Caller caller) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
 
     	// event names start with their date (yyyyMMdd_...) so whole dates after "before" can be skipped
@@ -338,7 +344,8 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         		if(before != null && eventDir.getName().compareTo(before) >= 0) continue;
 
         		scanned++;
-        		if(!hasOllamaLabel(readOllama(eventDir),label)) continue;
+        		Map<String,Object> ollama = readOllama(eventDir);
+        		if(!hasOllamaLabel(ollama,label) || !caller.mayView(ollamaLabels(ollama))) continue;
 
         		MeEvent meEvent = readMeData(eventDir);
         		if(longEnough(meEvent, minimumDuration))
@@ -400,10 +407,12 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     public Map<String,Object> GetEvent(
     		@PathVariable String meGroup,
     		@PathVariable String meEventGroup,
-    		@PathVariable String meName) throws IOException {
+    		@PathVariable String meName,
+    		HttpServletRequest request) throws IOException {
     	Log.info("/catcam/event/"+meGroup+"/"+meEventGroup+"/"+meName);
     	File eventDir = uploadDir(meGroup, meEventGroup, meName);
-    	if(!eventDir.isDirectory()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such event");
+    	if(!eventDir.isDirectory() || !mayView(Caller.of(request), eventDir))
+    		throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such event");
 
     	Map<String,Long> files = new LinkedHashMap<String,Long>();
     	Path base = eventDir.toPath();
@@ -476,8 +485,9 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     // for writing me_ollama.json: readable, and keeps a null original (an event ollama never classified)
     private final Gson ollamaWriter = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
 
-    // Just the labels of a me_ollama.json, without the backups
+    // Just the labels of a me_ollama.json, without the backups (null for null)
     private static Map<String,Object> ollamaLabels(Map<String,Object> ollama) {
+    	if(ollama == null) return(null);
     	Map<String,Object> labels = new LinkedHashMap<String,Object>();
     	for (Map.Entry<String,Object> entry : ollama.entrySet())
     		if(!entry.getKey().startsWith("me_")) labels.put(entry.getKey(), entry.getValue());
@@ -551,7 +561,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     				: Collections.singletonList(uploadDir(meGroup));
     		List<MeEvent> list = new ArrayList<MeEvent>();
     		for (File groupDir : groups)
-    			list.addAll(latestEvents(groupDir, n));
+    			list.addAll(latestEvents(groupDir, n, caller));
     		// event names start with their date and time, so they sort across cameras too
     		list.sort(Comparator.comparing((MeEvent e) -> String.valueOf(e.get("me_name"))).reversed());
     		return(list.size() > n ? new ArrayList<MeEvent>(list.subList(0, n)) : list);
@@ -561,15 +571,17 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	}
     }
 
-    private List<MeEvent> latestEvents(File groupDir, int n) {
+    private List<MeEvent> latestEvents(File groupDir, int n, Caller caller) {
     	List<MeEvent> list = new ArrayList<MeEvent>();
     	for (File dateDir : subDirsNewestFirst(groupDir)) {
     		for (File eventDir : subDirsNewestFirst(dateDir)) {
     			if(list.size() >= n) return(list);
+    			Map<String,Object> ollama = readOllama(eventDir);
+    			if(!caller.mayView(ollamaLabels(ollama))) continue;
     			MeEvent meEvent = readMeData(eventDir);
     			if(meEvent == null) continue;
     			briefMeEvent(meEvent);
-    			meEvent.put("me_ollama", readOllama(eventDir));
+    			meEvent.put("me_ollama", ollama);
     			list.add(meEvent);
     		}
     	}
@@ -658,6 +670,9 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     private ResponseEntity<Resource> serveFile(HttpServletRequest request, String... names) {
     	uploadDir(names);    // refuses names that leave the uploads folder
+    	// an animals-only caller gets a hidden event's files as if they weren't there (camera, date, event, file...)
+    	if(!mayView(Caller.of(request), uploadDir(names[0], names[1], names[2])))
+    		throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such file");
         Resource resource = fileStorageService.loadFileAsResource(String.join("/", names));
 
         // Try to determine file's content type

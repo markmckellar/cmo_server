@@ -46,8 +46,20 @@
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
     return r.json();
   }
+  // the household picked to start with: the most limited one, so a quick Approve doesn't give away every camera
+  function safest() {
+    const score = a => (a.view_only ? 1 : 0) + (a.animals_only ? 1 : 0);
+    return accounts.reduce((best, a) => (best === null || score(a) > score(best) ? a : best), null);
+  }
+  // what a household's people may not do, e.g. " · view only, animals only"
+  function limits(a) {
+    const l = [];
+    if (a.view_only) l.push('view only');
+    if (a.animals_only) l.push('animals only');
+    return l.length ? ' · ' + l.join(', ') : '';
+  }
   function accountPicker(id) {
-    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '">' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')</option>').join('') + '</select>';
+    return '<select id="acct-' + id + '">' + accounts.map(a => '<option value="' + esc(a.id) + '"' + (a === safest() ? ' selected' : '') + '>' + esc(a.id) + ' (' + esc(a.cameras.join(', ')) + ')' + limits(a) + '</option>').join('') + '</select>';
   }
   document.addEventListener('click', ev => {
     const b = ev.target.closest('button[data-act]');

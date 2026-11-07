@@ -10,8 +10,15 @@ import java.util.Optional;
  */
 public interface AccessStore {
 
-	/** A household: the people (verified emails) and the cameras that belong to it. */
-	record Account(String id, List<String> members, List<String> cameras) {
+	/**
+	 * A household: the people (verified emails) and the cameras that belong to it. {@code viewOnly}: its people
+	 * may look but not change labels. {@code animalsOnly}: its people see only events labeled cat, dog or raccoon
+	 * and not person (e.g. a "friends" household for people Mark shares the link with).
+	 */
+	record Account(String id, List<String> members, List<String> cameras, boolean viewOnly, boolean animalsOnly) {
+		public Account(String id, List<String> members, List<String> cameras) {
+			this(id, members, cameras, false, false);
+		}
 	}
 
 	/**
