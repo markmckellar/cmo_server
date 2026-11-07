@@ -389,12 +389,23 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return(d);
     }
 
+    // Search labels that also match others the AI writes: people see "person" and "legs" (a person's legs or
+    // feet) as one thing, so a search for person finds legs too, and "without person" leaves both out. The
+    // files keep both labels as the AI wrote them.
+    static final Map<String,List<String>> SEARCH_ALSO = Map.of("person", List.of("person", "legs"));
+
+    static boolean hasSearchLabel(Map<String,Object> ollama, String label) {
+    	for (String l : SEARCH_ALSO.getOrDefault(label, List.of(label)))
+    		if(hasOllamaLabel(ollama, l)) return(true);
+    	return(false);
+    }
+
     // Does an event with these labels pass the label filters?
     static boolean matchesLabels(Map<String,Object> ollama, List<String> wanted, boolean all, List<String> unwanted) {
-    	for (String l : unwanted) if(hasOllamaLabel(ollama, l)) return(false);
+    	for (String l : unwanted) if(hasSearchLabel(ollama, l)) return(false);
     	if(wanted.isEmpty()) return(true);
     	for (String l : wanted) {
-    		boolean has = hasOllamaLabel(ollama, l);
+    		boolean has = hasSearchLabel(ollama, l);
     		if(all && !has) return(false);
     		if(!all && has) return(true);
     	}
@@ -468,7 +479,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	uploadDir(meGroup);    // refuses a camera name that would leave the uploads folder
     	long startTime = System.nanoTime();
     	int checked = 0;
-    	for (String[] c : labelIndex().candidates(meGroup, wanted, all, from, to, before)) {
+    	for (String[] c : labelIndex().candidates(meGroup, wanted, all, from, to, before, SEARCH_ALSO)) {
     		if(list.size()>=howMayRecords) break;
     		File eventDir = uploadDir(meGroup, c[0], c[1]);
     		checked++;

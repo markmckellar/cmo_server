@@ -36,6 +36,7 @@ class SearchFilterTests {
 		write("20261103", "20261103_010000_0003", BOTH);
 		write("20261103", "20261103_020000_0004", CAT_AND_PERSON);
 		write("20261104", "20261104_010000_0005", RACCOON);
+		write("20261105", "20261105_010000_0006", "{\"cat\": true, \"person\": false, \"legs\": true}");
 	}
 
 	static void write(String date, String name, String ollama) throws IOException {
@@ -53,12 +54,12 @@ class SearchFilterTests {
 
 	@Test
 	void noFiltersListsNewestFirst() throws Exception {
-		expect("", "20261104_010000_0005", "20261103_020000_0004", "20261103_010000_0003", "20261102_010000_0002", "20261101_010000_0001");
+		expect("", "20261105_010000_0006", "20261104_010000_0005", "20261103_020000_0004", "20261103_010000_0003", "20261102_010000_0002", "20261101_010000_0001");
 	}
 
 	@Test
 	void anyOfSeveralLabels() throws Exception {
-		expect("&labels=raccoon,cat", "20261104_010000_0005", "20261103_020000_0004", "20261103_010000_0003", "20261102_010000_0002", "20261101_010000_0001");
+		expect("&labels=raccoon,cat", "20261105_010000_0006", "20261104_010000_0005", "20261103_020000_0004", "20261103_010000_0003", "20261102_010000_0002", "20261101_010000_0001");
 		expect("&labels=raccoon", "20261104_010000_0005", "20261103_010000_0003", "20261101_010000_0001");
 	}
 
@@ -69,21 +70,21 @@ class SearchFilterTests {
 
 	@Test
 	void without() throws Exception {
-		expect("&labels=cat&without=person", "20261103_010000_0003", "20261102_010000_0002");
-		expect("&without=raccoon,person", "20261102_010000_0002");
+		expect("&labels=cat&without=person", "20261103_010000_0003", "20261102_010000_0002");    // 0006 has legs
+		expect("&without=raccoon,person", "20261102_010000_0002");    // 0006 has legs
 	}
 
 	@Test
 	void dateRangeAndOneDay() throws Exception {
 		expect("&from=20261102&to=20261103", "20261103_020000_0004", "20261103_010000_0003", "20261102_010000_0002");
 		expect("&from=2026-11-03&to=2026-11-03&labels=cat", "20261103_020000_0004", "20261103_010000_0003");
-		expect("&from=20261104", "20261104_010000_0005");
+		expect("&from=20261104&to=20261104", "20261104_010000_0005");
 		expect("&to=20261101", "20261101_010000_0001");
 	}
 
 	@Test
 	void pagesWithBefore() throws Exception {
-		mvc.perform(get("/catcam/search/pet_door?howMayRecords=2&minimumDuration=0&labels=cat"))
+		mvc.perform(get("/catcam/search/pet_door?howMayRecords=2&minimumDuration=0&labels=cat&to=20261104"))
 				.andExpect(jsonPath("$[*].me_name", contains("20261103_020000_0004", "20261103_010000_0003")));
 		expect("&labels=cat&before=20261103_010000_0003", "20261102_010000_0002");
 	}
@@ -91,6 +92,13 @@ class SearchFilterTests {
 	@Test
 	void oldOneLabelFormStillWorks() throws Exception {
 		expect("&label=RACCOON&from=20261102", "20261104_010000_0005", "20261103_010000_0003");
+	}
+
+	@Test
+	void personAlsoMeansLegs() throws Exception {
+		expect("&labels=person", "20261105_010000_0006", "20261103_020000_0004");
+		expect("&labels=legs", "20261105_010000_0006");
+		expect("&labels=cat&without=person&to=20261105", "20261103_010000_0003", "20261102_010000_0002");
 	}
 
 	@Test
@@ -125,13 +133,14 @@ class SearchFilterTests {
 			Thread.sleep(50);
 		}
 		mvc.perform(get("/catcam/health")).andExpect(jsonPath("$.label_index.ready").value(true))
-				.andExpect(jsonPath("$.label_index.events").value(5));
+				.andExpect(jsonPath("$.label_index.events").value(6));
 		anyOfSeveralLabels();
 		allLabelsInTheSameEvent();
 		without();
 		dateRangeAndOneDay();
 		pagesWithBefore();
 		oldOneLabelFormStillWorks();
+		personAlsoMeansLegs();
 	}
 
 	@Test

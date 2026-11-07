@@ -106,12 +106,22 @@ public class LabelIndex {
 	 * labels (or all of them), between the dates (yyyyMMdd, inclusive, null for no limit) and older than "before"
 	 * (an event name, or null). Callers re-check each one with {@link #labels}.
 	 */
-	public synchronized List<String[]> candidates(String camera, List<String> wanted, boolean all, String from, String to, String before) {
+	public List<String[]> candidates(String camera, List<String> wanted, boolean all, String from, String to, String before) {
+		return candidates(camera, wanted, all, from, to, before, Map.of());
+	}
+
+	/** The same, where a wanted label also matches others (e.g. person: person or legs). */
+	public synchronized List<String[]> candidates(String camera, List<String> wanted, boolean all, String from, String to, String before,
+			Map<String, List<String>> also) {
 		List<String[]> out = new ArrayList<>();
 		Camera c = cameras.get(camera);
 		if (c == null || wanted.isEmpty()) return out;
 		List<TreeSet<String>> sets = new ArrayList<>();
-		for (String l : wanted) sets.add(c.byLabel.getOrDefault(l, new TreeSet<>()));
+		for (String l : wanted) {
+			TreeSet<String> s = new TreeSet<>(Comparator.reverseOrder());
+			for (String a : also.getOrDefault(l, List.of(l))) s.addAll(c.byLabel.getOrDefault(a, new TreeSet<>()));
+			sets.add(s);
+		}
 		TreeSet<String> names;
 		if (all) {
 			sets.sort(Comparator.comparingInt(TreeSet::size));    // walk the smallest, check it is in the others
