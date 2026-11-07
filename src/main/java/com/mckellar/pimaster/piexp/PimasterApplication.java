@@ -257,43 +257,35 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return(!caller.animalsOnly() || caller.mayView(cachedLabels(eventDir)));
     }
 
-    // The labels of events already read, for searches: a raccoon search reads ~1,500 events to find 8, and
-    // reading and parsing every me_ollama.json each time is most of its cost. An entry is used only while the
-    // file's time and size are unchanged, so a new classification (from the web app, a re-run of the AI or a
-    // hand edit) is read again.
-    private record CachedLabels(long modified, long size, Map<String,Object> labels) {}
-    private final java.util.concurrent.ConcurrentHashMap<String,CachedLabels> labelCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final Map<String,Object> NO_LABELS_FILE = Collections.emptyMap();
+    // Which events have which labels, so a search for a rare label (raccoon) needn't read every event; see
+    // LabelIndex. Only in memory, built from the event folders at startup and re-checked every few minutes.
+    private volatile LabelIndex labelIndex;
+    private static final long LABEL_INDEX_RECHECK_MINUTES = 5;
+
+    private LabelIndex labelIndex() {
+    	LabelIndex i = labelIndex;
+    	if(i == null) synchronized(this) {
+    		if(labelIndex == null) labelIndex = new LabelIndex(uploadRoot().toFile(), dir -> ollamaLabels(readOllama(dir)));
+    		i = labelIndex;
+    	}
+    	return(i);
+    }
 
     // An event's labels (me_ollama.json without its backups), or null if it has none. Don't change the map.
     private Map<String,Object> cachedLabels(File eventDir) {
-    	File f = new File(eventDir, "me_ollama.json");
-    	long modified = f.lastModified(), size = f.length();    // 0 and 0 if the file is missing
-    	String key = f.getPath();
-    	CachedLabels c = labelCache.get(key);
-    	if(c == null || c.modified() != modified || c.size() != size) {
-    		Map<String,Object> labels = modified == 0 ? null : ollamaLabels(readOllama(eventDir));
-    		c = new CachedLabels(modified, size, labels == null ? NO_LABELS_FILE : Collections.unmodifiableMap(labels));
-    		labelCache.put(key, c);
-    	}
-    	return(c.labels() == NO_LABELS_FILE ? null : c.labels());
+    	return(labelIndex().labels(eventDir));
     }
 
-    // Read every event's labels once at startup, in the background, so the first search after a restart is
-    // as quick as the rest
+    // Build the label index in the background at startup, then re-check it against the folders every few minutes
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
-    public void warmLabelCache() {
-    	Thread t = new Thread(() -> {
-    		long start = System.nanoTime();
-    		for (File camera : subDirsNewestFirst(uploadRoot().toFile()))
-    			for (File date : subDirsNewestFirst(camera))
-    				for (File event : subDirsNewestFirst(date))
-    					cachedLabels(event);
-    		Log.info("label cache warmed: " + labelCache.size() + " events in " + (System.nanoTime() - start) / 1000000 + " ms");
-    	}, "label-cache-warmer");
-    	t.setDaemon(true);
-    	t.setPriority(Thread.MIN_PRIORITY);
-    	t.start();
+    public void startLabelIndex() {
+    	java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+    		Thread t = new Thread(r, "label-index");
+    		t.setDaemon(true);
+    		t.setPriority(Thread.MIN_PRIORITY);
+    		return(t);
+    	});
+    	ex.scheduleWithFixedDelay(() -> labelIndex().rebuild(), 0, LABEL_INDEX_RECHECK_MINUTES, TimeUnit.MINUTES);
     }
 
     private static boolean longEnough(MeEvent meEvent, Double minimumDuration) {
@@ -411,6 +403,19 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
 
     private List<MeEvent> searchMeEvents(String meGroup, List<String> wanted, boolean all, List<String> unwanted,
     		String from, String to, int howMayRecords, Double minimumDuration, String before, boolean brief, Caller caller) {
+    	// with labels to look for, ask the index which events have them; if it isn't ready yet, or anything goes
+    	// wrong with it, read every event instead (slower, same answer)
+    	if(!wanted.isEmpty() && labelIndex().isReady()) {
+    		try {
+    			return(searchByIndex(meGroup, wanted, all, unwanted, from, to, howMayRecords, minimumDuration, before, brief, caller));
+    		}
+    		catch(ResponseStatusException e) {
+    			throw e;
+    		}
+    		catch(RuntimeException e) {
+    			Log.error("label index search failed, reading every event instead: "+e, e);
+    		}
+    	}
     	List<MeEvent> list = new ArrayList<MeEvent>();
     	boolean byLabel = !wanted.isEmpty() || !unwanted.isEmpty() || caller.animalsOnly();
 
@@ -452,6 +457,32 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         Log.info("SearchMeEvents: list="+list.size()+" scanned="+scanned+" elapsedTime="+elapsedTime);
 
         return(list);
+    }
+
+    // A label search through the index: only the events it says have the labels are read, and each one is
+    // checked against its own files first (labels() rereads a me_ollama.json that changed), so a stale index
+    // entry can't put a wrong event in the results
+    private List<MeEvent> searchByIndex(String meGroup, List<String> wanted, boolean all, List<String> unwanted,
+    		String from, String to, int howMayRecords, Double minimumDuration, String before, boolean brief, Caller caller) {
+    	List<MeEvent> list = new ArrayList<MeEvent>();
+    	uploadDir(meGroup);    // refuses a camera name that would leave the uploads folder
+    	long startTime = System.nanoTime();
+    	int checked = 0;
+    	for (String[] c : labelIndex().candidates(meGroup, wanted, all, from, to, before)) {
+    		if(list.size()>=howMayRecords) break;
+    		File eventDir = uploadDir(meGroup, c[0], c[1]);
+    		checked++;
+    		Map<String,Object> labels = cachedLabels(eventDir);
+    		if(!eventDir.isDirectory() || !caller.mayView(labels) || !matchesLabels(labels, wanted, all, unwanted)) continue;
+    		MeEvent meEvent = readMeData(eventDir);
+    		if(longEnough(meEvent, minimumDuration)) {
+    			if(brief) briefMeEvent(meEvent);
+    			meEvent.put("me_ollama", readOllama(eventDir));
+    			list.add(meEvent);
+    		}
+    	}
+    	Log.info("SearchMeEvents (index): list="+list.size()+" checked="+checked+" elapsedTime="+(System.nanoTime() - startTime)/1000000);
+    	return(list);
     }
 
     // true if the event's me_ollama.json has the label (any case) set to true
@@ -561,6 +592,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	String[] left = dateDir.list();
     	if(left != null && left.length == 0) Files.deleteIfExists(dateDir.toPath());
     	Log.info("DeleteEvent: "+meGroup+"/"+meEventGroup+"/"+meName+" deleted="+deleted);
+    	labelIndex().remove(meGroup, meName);
 
     	Map<String,Object> result = new LinkedHashMap<String,Object>();
     	result.put("me_group", meGroup);
@@ -635,6 +667,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	Files.writeString(tmpFile.toPath(), ollamaWriter.toJson(result), StandardCharsets.UTF_8);
     	Files.move(tmpFile.toPath(), ollamaFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     	Log.info("PutClassification: "+meGroup+"/"+meEventGroup+"/"+meName+" now="+labels);
+    	labelIndex().refresh(eventDir);
     	return(result);
     }
 
@@ -715,6 +748,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	result.put("total_bytes", root.getTotalSpace());
     	result.put("groups", groups);
     	result.put("auth", authConfig.describe(accessStore));
+    	result.put("label_index", labelIndex().describe());
     	return(result);
     }
 
@@ -733,6 +767,7 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
         String fileName = fileStorageService.storeFile(file, saveDir+"/"+saveFileName);
 
         Log.info("uploadme:fileName="+fileName);
+        labelIndex().refresh(uploadDir(meGroup, meEventGroup, meName));    // a new event, or its me_ollama.json
 
         String fileDownloadUri = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/catcam/data/")

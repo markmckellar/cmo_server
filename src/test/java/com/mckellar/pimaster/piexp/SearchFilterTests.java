@@ -100,20 +100,38 @@ class SearchFilterTests {
 	}
 
 	@Test
-	void aChangedClassificationIsSeenRightAway() throws Exception {
-		mvc.perform(get("/catcam/search/pet_door?howMayRecords=10&minimumDuration=0&labels=dog"))    // nothing yet; labels now remembered
+	void aRelabeledEventIsFoundRightAway() throws Exception {
+		mvc.perform(get("/catcam/search/pet_door?howMayRecords=10&minimumDuration=0&labels=dog"))
 				.andExpect(jsonPath("$.length()").value(0));
-		java.nio.file.Path f = Paths.get("target/filter-uploads/pet_door/20261102/20261102_010000_0002/me_ollama.json");
-		String before = java.nio.file.Files.readString(f);
+		String path = "/catcam/event/pet_door/20261102/20261102_010000_0002/classification";
+		mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(path)
+				.contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"cat\": true, \"dog\": true, \"person\": false}"))
+				.andExpect(status().isOk());
 		try {
-			java.nio.file.Files.writeString(f, "{\"cat\": true, \"dog\": true, \"person\": false}");
-			f.toFile().setLastModified(System.currentTimeMillis() + 5000);
 			expect("&labels=dog", "20261102_010000_0002");
 		}
 		finally {
-			java.nio.file.Files.writeString(f, before);
-			f.toFile().setLastModified(System.currentTimeMillis() + 10000);
+			mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(path)
+					.contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(CAT)).andExpect(status().isOk());
 		}
+	}
+
+	@Test
+	void theIndexGivesTheSameAnswers() throws Exception {
+		// the index is built in the background at startup; wait for it, then the same searches go through it
+		for (int i = 0; i < 100; i++) {
+			String health = mvc.perform(get("/catcam/health")).andReturn().getResponse().getContentAsString();
+			if (health.contains("\"ready\":true")) break;
+			Thread.sleep(50);
+		}
+		mvc.perform(get("/catcam/health")).andExpect(jsonPath("$.label_index.ready").value(true))
+				.andExpect(jsonPath("$.label_index.events").value(5));
+		anyOfSeveralLabels();
+		allLabelsInTheSameEvent();
+		without();
+		dateRangeAndOneDay();
+		pagesWithBefore();
+		oldOneLabelFormStillWorks();
 	}
 
 	@Test
