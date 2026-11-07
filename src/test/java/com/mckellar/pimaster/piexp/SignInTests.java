@@ -71,7 +71,9 @@ class SignInTests {
 				+ "  {\"id\": \"friends\", \"members\": [], \"cameras\": [\"pet_door\"], \"view_only\": true, \"animals_only\": true}]}");
 		// more pet door events for the friends household: a raccoon (shown), a cat with a person (hidden), never classified (hidden)
 		String[][] more = {{"0002", "{\"person\": false, \"raccoon\": true, \"animal\": true}"},
-				{"0003", "{\"person\": true, \"cat\": true}"}, {"0004", null}};
+				{"0003", "{\"person\": true, \"cat\": true}"}, {"0004", null},
+				{"0005", "{\"person\": false, \"legs\": true, \"cat\": true}"},       // a person's legs: hidden
+				{"0006", "{\"person\": false, \"delivery\": true, \"dog\": true}"}};  // a delivery: hidden
 		for (String[] e : more) {
 			String name = "20261101_12000" + e[0].substring(3) + "_" + e[0];
 			Path dir = Files.createDirectories(UPLOADS.resolve("pet_door").resolve("20261101").resolve(name));
@@ -159,13 +161,18 @@ class SignInTests {
 				.andExpect(jsonPath("$.length()").value(1));
 		mvc.perform(get("/catcam/search/pet_door?label=cat&howMayRecords=10&minimumDuration=0").cookie(friend))
 				.andExpect(jsonPath("$.length()").value(0));
+		// asking for people outright, or for nothing in particular, still finds only the raccoon
+		for (String q : new String[] {"labels=person", "labels=legs", "labels=delivery", "labels=cat,dog,person,legs", "without=raccoon", ""})
+			mvc.perform(get("/catcam/search/pet_door?howMayRecords=10&minimumDuration=0&" + q).cookie(friend))
+					.andExpect(jsonPath("$[*].me_name", org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is("20261101_120002_0002"))));
 		mvc.perform(get("/catcam/search/pet_door?label=raccoon&howMayRecords=10&minimumDuration=0").cookie(friend))
 				.andExpect(jsonPath("$.length()").value(1));
 
 		// direct addresses: a hidden event and its files are not there
 		mvc.perform(get("/catcam/event/pet_door/20261101/20261101_120002_0002").cookie(friend)).andExpect(status().isOk());
 		mvc.perform(get("/catcam/data/pet_door/20261101/20261101_120002_0002/me_rep_image.jpg").cookie(friend)).andExpect(status().isOk());
-		for (String hidden : new String[] {"20261101_120003_0003", "20261101_120004_0004", "20261101_120000_0001"}) {
+		for (String hidden : new String[] {"20261101_120003_0003", "20261101_120004_0004", "20261101_120000_0001",
+				"20261101_120005_0005", "20261101_120006_0006"}) {
 			mvc.perform(get("/catcam/event/pet_door/20261101/" + hidden).cookie(friend)).andExpect(status().isNotFound());
 			mvc.perform(get("/catcam/data/pet_door/20261101/" + hidden + "/me_data.json").cookie(friend)).andExpect(status().isNotFound());
 		}
@@ -177,7 +184,7 @@ class SignInTests {
 				.andExpect(jsonPath("$.error").value("view only"));
 
 		// the admin still sees everything
-		mvc.perform(get("/catcam/latest/pet_door").cookie(boss)).andExpect(jsonPath("$.length()").value(4));
+		mvc.perform(get("/catcam/latest/pet_door").cookie(boss)).andExpect(jsonPath("$.length()").value(6));
 	}
 
 	@Test

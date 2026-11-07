@@ -24,25 +24,30 @@ public record Caller(String kind, String id, String account, String role, Set<St
 		this(kind, id, account, role, cameras, admin, name, false, false);
 	}
 
-	/** The labels an animals-only caller may see; one of them must be true and "person" must be false. */
+	/** The labels an animals-only caller may see; one of them must be true. */
 	public static final Set<String> ANIMALS = Set.of("cat", "dog", "raccoon");
+
+	/** Labels that mean a person (or part of one) is in the clip; none may be true for an animals-only caller. */
+	public static final Set<String> PEOPLE = Set.of("person", "legs", "delivery");
 
 	/**
 	 * May this caller see an event with these labels (its me_ollama.json, or null if it has none)? Always yes,
-	 * except for animals-only callers: then "person" must be false (not just missing) and an animal true, so an
-	 * event the AI never classified, or one with a person in it, stays hidden.
+	 * except for animals-only callers (the friends household): then "person" must be false (not just missing),
+	 * no other people label (legs, delivery) may be true, and an animal must be true. So an event the AI never
+	 * classified, or one with any part of a person in it, stays hidden.
 	 */
 	public boolean mayView(java.util.Map<String, Object> labels) {
 		if (!animalsOnly) return true;
 		if (labels == null) return false;
 		Boolean person = null;
-		boolean animal = false;
+		boolean animal = false, people = false;
 		for (java.util.Map.Entry<String, Object> e : labels.entrySet()) {
 			String k = e.getKey().toLowerCase(java.util.Locale.ROOT);
 			if (k.equals("person") && e.getValue() instanceof Boolean b) person = b;
+			if (PEOPLE.contains(k) && Boolean.TRUE.equals(e.getValue())) people = true;
 			if (ANIMALS.contains(k) && Boolean.TRUE.equals(e.getValue())) animal = true;
 		}
-		return Boolean.FALSE.equals(person) && animal;
+		return Boolean.FALSE.equals(person) && !people && animal;
 	}
 
 	public static final String ATTRIBUTE = Caller.class.getName();
