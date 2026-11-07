@@ -123,6 +123,7 @@ public class AuthController {
 	@PostMapping("/auth/admin/reject")
 	public Map<String, Object> reject(@RequestBody Map<String, String> body, HttpServletRequest request) {
 		String email = required(body, "email");
+		if (store.isAdmin(email)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "an admin can't be turned away here");
 		store.reject(email);
 		Log.info("{} rejected {}", Caller.of(request).id(), email);
 		return Map.of("rejected", email);

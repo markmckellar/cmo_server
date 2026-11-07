@@ -265,6 +265,7 @@ public class JsonAccessStore implements AccessStore {
 		FileContents c = current();
 		String e = norm(email);
 		c.pending.removeIf(p -> norm(p.email).equals(e));
+		for (FileAccount a : c.accounts) a.members.removeIf(m -> norm(m).equals(e));    // a member loses access too
 		if (!hasEmail(c.rejected, e)) c.rejected.add(e);
 		save();
 		Log.info("{} rejected", e);

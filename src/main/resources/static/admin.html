@@ -37,8 +37,8 @@
   <section id="body"></section>
   <section id="people" hidden>
     <h2>People</h2>
-    <p class="muted">Move someone to another household, e.g. a friend you've decided to give both cameras. Nobody can ask for
-      this in the app; they ask you.</p>
+    <p class="muted">Move someone to another household (e.g. a friend you've decided to give both cameras), or remove their
+      access. Nobody can ask for more in the app; they ask you.</p>
     <input id="find" type="search" placeholder="Search by email" autocomplete="off" aria-label="Search people by email" />
     <div id="found"></div>
   </section>
@@ -76,6 +76,7 @@
     if (!b) return;
     if (b.dataset.act === 'approve') approve(b.dataset.picker, b.dataset.email);
     else if (b.dataset.act === 'move') move(b.dataset.picker, b.dataset.email, b.dataset.from);
+    else if (b.dataset.act === 'remove') removeAccess(b.dataset.email, b.dataset.from);
     else if (b.dataset.act === 'reject') reject(b.dataset.email);
   });
   async function approve(i, email) {
@@ -97,11 +98,17 @@
     document.getElementById('found').innerHTML = !q ? '' : people.length ? people.map((p, i) =>
       '<div class="card"><div class="who"><b>' + esc(p.email) + '</b><span class="muted">now in ' + esc(p.from) + '</span></div>' +
       '<div class="actions">' + accountPicker('m' + i, p.from) + '<button data-act="move" data-picker="m' + i + '" data-email="' + esc(p.email) +
-      '" data-from="' + esc(p.from) + '">Move</button></div></div>').join('')
+      '" data-from="' + esc(p.from) + '">Move</button>' +
+      '<button class="bad" data-act="remove" data-email="' + esc(p.email) + '" data-from="' + esc(p.from) + '">Remove access</button></div></div>').join('')
       : '<p class="muted">Nobody matches. People show up here once they have signed in and been approved.</p>';
   }
   document.getElementById('find').addEventListener('input', showPeople);
 
+  // takes them out of their household; they can't see anything, and signing in again doesn't ask you again
+  async function removeAccess(email, from) {
+    if (!confirm('Remove ' + email + ' from ' + from + '? They won\'t see the cameras any more. You can let them in again under "Turned away".')) return;
+    try { await post('/auth/admin/reject', { email }); msg(email + ' no longer has access.'); load(); } catch (e) { msg('Failed: ' + e.message); }
+  }
   async function reject(email) {
     if (!confirm('Turn away ' + email + '? They won\'t be asked about again.')) return;
     try { await post('/auth/admin/reject', { email }); msg(email + ' turned away.'); load(); } catch (e) { msg('Failed: ' + e.message); }

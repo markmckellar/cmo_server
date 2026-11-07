@@ -188,6 +188,25 @@ class SignInTests {
 	}
 
 	@Test
+	void aMemberCanLoseAccessButAnAdminCant() throws Exception {
+		Cookie friend = signIn("newbie", "pending");
+		Cookie boss = signIn("boss", "admin");
+		mvc.perform(post("/auth/admin/approve").cookie(boss).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\": \"newbie@example.com\", \"account\": \"friends\"}")).andExpect(status().isOk());
+		mvc.perform(get("/catcam/latest/pet_door").cookie(friend)).andExpect(status().isOk());
+		mvc.perform(post("/auth/admin/reject").cookie(boss).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\": \"newbie@example.com\"}")).andExpect(status().isOk());
+		mvc.perform(get("/catcam/latest/pet_door").cookie(friend)).andExpect(status().isForbidden());    // the same cookie, at once
+		mvc.perform(get("/auth/config").cookie(friend)).andExpect(jsonPath("$.status").value("rejected"));
+		org.junit.jupiter.api.Assertions.assertFalse(Files.readString(ACCESS).contains("\"newbie@example.com\"]"), "still a member");
+		reset(notifier);
+		signIn("newbie", "rejected");
+		verify(notifier, never()).send(anyString());    // signing in again doesn't ask Mark again
+		mvc.perform(post("/auth/admin/reject").cookie(boss).contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\": \"boss@example.com\"}")).andExpect(status().isBadRequest());
+	}
+
+	@Test
 	void adminSeesEverythingAndMayDelete() throws Exception {
 		Cookie boss = signIn("boss", "admin");
 		mvc.perform(get("/catcam/latest/neighbor_cam").cookie(boss)).andExpect(status().isOk());

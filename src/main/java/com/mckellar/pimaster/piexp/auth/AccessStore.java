@@ -68,7 +68,10 @@ public interface AccessStore {
 	/** Let a waiting (or rejected) person in, as a member of this account. */
 	void approve(String email, String accountId);
 
-	/** Turn a waiting person away; they stay turned away (and aren't alerted about again). */
+	/**
+	 * Turn a person away: someone waiting, or a member losing access (taken out of their household). They stay
+	 * turned away (and aren't alerted about again) until let in again.
+	 */
 	void reject(String email);
 
 	/** How many devices and accounts are configured, for health and startup logs. */
