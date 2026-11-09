@@ -25,6 +25,9 @@ public final class Access {
 
 	public enum Level { WORLD, HOME, CAMERA }
 
+	/** What a camera, home, group or label may be called: letters, digits, _ and -. */
+	public static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
+
 	/** Labels that mean a person (or part of one) is in a clip. */
 	public static final Set<String> PEOPLE = Set.of("person", "legs", "delivery");
 
@@ -88,6 +91,50 @@ public final class Access {
 				case HOME -> id != null && id.equals(homeOf.apply(camera));
 				case CAMERA -> camera.equals(id);
 			};
+		}
+
+		/** For the admin page: {"level": "world"|"home"|"camera", "id": ..., "show": [...] or null, "hide": [...]}. */
+		public Map<String, Object> toMap() {
+			Map<String, Object> m = new java.util.LinkedHashMap<>();
+			m.put("level", level.name().toLowerCase(Locale.ROOT));
+			m.put("id", id);
+			m.put("show", rule.show() == null ? null : rule.show().stream().sorted().toList());
+			m.put("hide", rule.hide().stream().sorted().toList());
+			return m;
+		}
+
+		/**
+		 * From the admin page's form (as {@link #toMap}). Refuses a missing level, a home or camera grant without
+		 * an id, and labels or ids that aren't plain names, so nothing odd ends up in access.json.
+		 */
+		@SuppressWarnings("unchecked")
+		public static Grant fromMap(Map<String, Object> m) {
+			if (m == null) throw new IllegalArgumentException("empty grant");
+			Level level;
+			try {
+				level = Level.valueOf(String.valueOf(m.get("level")).toUpperCase(Locale.ROOT));
+			}
+			catch (IllegalArgumentException e) {
+				throw new IllegalArgumentException("a grant's level must be world, home or camera");
+			}
+			String id = m.get("id") == null ? null : String.valueOf(m.get("id")).trim();
+			if (level == Level.WORLD) id = null;
+			else if (id == null || !NAME.matcher(id).matches()) throw new IllegalArgumentException("a " + level.name().toLowerCase(Locale.ROOT) + " grant needs a valid id");
+			Set<String> show = m.get("show") == null ? null : labels(m.get("show"));
+			Set<String> hide = m.get("hide") == null ? Set.of() : labels(m.get("hide"));
+			if (show != null && show.isEmpty()) throw new IllegalArgumentException("pick at least one kind of clip to show, or show all clips");
+			return new Grant(level, id, new Rule(show, hide));
+		}
+
+		private static Set<String> labels(Object o) {
+			if (!(o instanceof java.util.Collection<?> c)) throw new IllegalArgumentException("labels must be a list");
+			Set<String> out = new LinkedHashSet<>();
+			for (Object x : c) {
+				String l = String.valueOf(x).trim().toLowerCase(Locale.ROOT);
+				if (!NAME.matcher(l).matches()) throw new IllegalArgumentException("not a label: " + x);
+				out.add(l);
+			}
+			return out;
 		}
 
 		public String describe(Function<String, String> homeName) {

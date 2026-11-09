@@ -83,7 +83,7 @@ public class AuthController {
 			status = "pending";
 			if (store.recordPending(u.email(), u.name()))
 				notifier.send("Home Cams: " + u.name() + " (" + u.email() + ") asked for access.\nApprove or reject: "
-						+ siteUrl(request) + "/admin.html");
+						+ siteUrl(request) + "/cmo_client/index.html#/access");
 		}
 		Log.info("signed in: {} ({})", u.email(), status);
 		return Map.of("email", u.email(), "name", u.name(), "status", status);
@@ -102,6 +102,7 @@ public class AuthController {
 		for (AccessStore.Account a : store.accounts())
 			accounts.add(Map.of("id", a.id(), "members", a.members(), "cameras", a.cameras(),
 					"view_only", a.viewOnly(), "animals_only", a.animalsOnly(),
+					"grants", a.grants().stream().map(Access.Grant::toMap).toList(),
 					"summary", store.access(a).describe(store::homeName) + (a.viewOnly() ? " · view only" : "")));
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("pending", store.pending());
@@ -110,12 +111,79 @@ public class AuthController {
 		m.put("homes", homes);
 		m.put("accounts", accounts);
 		m.put("rejected", store.rejected());
+		m.put("admins", store.admins());
+		m.put("devices", store.devices().stream().map(d -> Map.of("id", d.id(), "account", String.valueOf(d.account()), "role", String.valueOf(d.role()))).toList());
 		return m;
+	}
+
+	/**
+	 * Create a group or change what it may see: {"id": "aidan", "view_only": true, "grants": [{"level": "camera",
+	 * "id": "pet_door", "show": ["cat"], "hide": ["person"]}]}. Members stay where they are.
+	 */
+	@PostMapping("/auth/admin/account")
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> saveAccount(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+		String id = body == null || body.get("id") == null ? "" : String.valueOf(body.get("id")).trim();
+		boolean viewOnly = body != null && Boolean.TRUE.equals(body.get("view_only"));
+		try {
+			List<Access.Grant> grants = new ArrayList<>();
+			Object gs = body == null ? null : body.get("grants");
+			if (gs != null && !(gs instanceof List)) throw new IllegalArgumentException("grants must be a list");
+			for (Object g : gs == null ? List.of() : (List<Object>) gs) {
+				if (!(g instanceof Map)) throw new IllegalArgumentException("a grant must be an object");
+				grants.add(Access.Grant.fromMap((Map<String, Object>) g));
+			}
+			store.saveAccount(id, viewOnly, grants);
+		}
+		catch (IllegalArgumentException e) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+		}
+		Log.info("{} saved group {}", Caller.of(request).id(), id);
+		return Map.of("saved", id);
+	}
+
+	@PostMapping("/auth/admin/account/delete")
+	public Map<String, Object> deleteAccount(@RequestBody Map<String, String> body, HttpServletRequest request) {
+		String id = required(body, "id");
+		try {
+			store.deleteAccount(id);
+		}
+		catch (IllegalArgumentException e) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+		}
+		Log.info("{} deleted group {}", Caller.of(request).id(), id);
+		return Map.of("deleted", id);
+	}
+
+	/** Which cameras are in which home: {"homes": [{"id": "mckellar", "name": "McKellar house", "cameras": [...]}]}. */
+	@PostMapping("/auth/admin/homes")
+	@SuppressWarnings("unchecked")
+	public Map<String, Object> saveHomes(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+		try {
+			Object hs = body == null ? null : body.get("homes");
+			if (!(hs instanceof List)) throw new IllegalArgumentException("homes must be a list");
+			List<AccessStore.Home> homes = new ArrayList<>();
+			for (Object o : (List<Object>) hs) {
+				if (!(o instanceof Map)) throw new IllegalArgumentException("a home must be an object");
+				Map<String, Object> h = (Map<String, Object>) o;
+				Object cams = h.get("cameras");
+				List<String> cameras = cams instanceof List<?> l ? l.stream().map(String::valueOf).toList() : List.of();
+				homes.add(new AccessStore.Home(h.get("id") == null ? null : String.valueOf(h.get("id")).trim(),
+						h.get("name") == null ? null : String.valueOf(h.get("name")), cameras));
+			}
+			store.saveHomes(homes);
+		}
+		catch (IllegalArgumentException e) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+		}
+		Log.info("{} saved the homes", Caller.of(request).id());
+		return Map.of("saved", true);
 	}
 
 	@PostMapping("/auth/admin/approve")
 	public Map<String, Object> approve(@RequestBody Map<String, String> body, HttpServletRequest request) {
 		String email = required(body, "email"), account = required(body, "account");
+		if (!email.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "not an email address: " + email);
 		try {
 			store.approve(email, account);
 		}

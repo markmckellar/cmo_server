@@ -299,6 +299,82 @@ public class JsonAccessStore implements AccessStore {
 	}
 
 	@Override
+	public synchronized void saveAccount(String id, boolean viewOnly, List<Access.Grant> grants) {
+		if (id == null || !Access.NAME.matcher(id).matches()) throw new IllegalArgumentException("a group's name may have only letters, digits, _ and -");
+		FileContents c = current();
+		FileAccount target = null;
+		for (FileAccount a : c.accounts) if (a.id.equals(id)) target = a;
+		if (target == null) {
+			target = new FileAccount();
+			target.id = id;
+			c.accounts.add(target);
+		}
+		target.viewOnly = viewOnly;
+		target.animalsOnly = false;
+		target.cameras = new ArrayList<>();
+		target.grants = new ArrayList<>();
+		for (Access.Grant g : grants) {
+			FileGrant f = new FileGrant();
+			switch (g.level()) {
+				case WORLD -> f.world = true;
+				case HOME -> f.home = g.id();
+				case CAMERA -> f.camera = g.id();
+			}
+			if (g.rule().show() != null) f.show = g.rule().show().stream().sorted().toList();
+			if (!g.rule().hide().isEmpty()) f.hide = g.rule().hide().stream().sorted().toList();
+			target.grants.add(f);
+		}
+		save();
+		Log.info("group {} saved: {}{}", id, new Access(toAccount(target).grants(), this::homeOf).describe(this::homeName), viewOnly ? " · view only" : "");
+	}
+
+	@Override
+	public synchronized void deleteAccount(String id) {
+		FileContents c = current();
+		FileAccount target = null;
+		for (FileAccount a : c.accounts) if (a.id.equals(id)) target = a;
+		if (target == null) throw new IllegalArgumentException("no group " + id);
+		if (!target.members.isEmpty()) throw new IllegalArgumentException("move or remove its " + target.members.size() + " member(s) first");
+		for (FileDevice d : c.devices) if (id.equals(d.account)) throw new IllegalArgumentException("device " + d.id + " belongs to it");
+		c.accounts.remove(target);
+		save();
+		Log.info("group {} deleted", id);
+	}
+
+	@Override
+	public synchronized void saveHomes(List<Home> homes) {
+		FileContents c = current();
+		List<FileHome> out = new ArrayList<>();
+		java.util.Set<String> ids = new java.util.HashSet<>(), cams = new java.util.HashSet<>();
+		for (Home h : homes) {
+			if (h.id() == null || !Access.NAME.matcher(h.id()).matches()) throw new IllegalArgumentException("a home's id may have only letters, digits, _ and -");
+			if (!ids.add(h.id())) throw new IllegalArgumentException("two homes are called " + h.id());
+			FileHome f = new FileHome();
+			f.id = h.id();
+			f.name = h.name() == null || h.name().isBlank() ? null : h.name().trim();
+			for (String cam : h.cameras()) {
+				if (!Access.NAME.matcher(cam).matches()) throw new IllegalArgumentException("not a camera: " + cam);
+				if (!cams.add(cam)) throw new IllegalArgumentException(cam + " is in two homes");
+				f.cameras.add(cam);
+			}
+			out.add(f);
+		}
+		c.homes = out.isEmpty() ? null : out;
+		save();
+		Log.info("homes saved: {}", out.size());
+	}
+
+	@Override
+	public List<String> admins() {
+		return List.copyOf(current().admins);
+	}
+
+	@Override
+	public List<Device> devices() {
+		return current().devices.stream().map(d -> new Device(d.id, d.account, d.role, listOf(d.cameras))).toList();
+	}
+
+	@Override
 	public String summary() {
 		return summary(current());
 	}

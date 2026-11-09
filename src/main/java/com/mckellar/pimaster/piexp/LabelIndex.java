@@ -188,6 +188,23 @@ public class LabelIndex {
 		}
 	}
 
+	/**
+	 * For the admin page's preview: per camera, how many events there are and how many of them pass the test
+	 * (camera, labels or null). Only what is in memory; nothing is read.
+	 */
+	public synchronized Map<String, int[]> count(java.util.function.BiPredicate<String, Map<String, Object>> visible) {
+		Map<String, int[]> out = new TreeMap<>();
+		for (Map.Entry<String, Camera> c : cameras.entrySet()) {
+			int[] n = new int[2];
+			for (Entry e : c.getValue().events.values()) {
+				n[0]++;
+				if (visible.test(c.getKey(), e.labels())) n[1]++;
+			}
+			out.put(c.getKey(), n);
+		}
+		return out;
+	}
+
 	/** For /catcam/health: is it ready, how many events, how long the last re-check took and when. */
 	public synchronized Map<String, Object> describe() {
 		int events = 0;

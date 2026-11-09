@@ -104,6 +104,24 @@ public interface AccessStore {
 	 */
 	void reject(String email);
 
+	/**
+	 * Create a group, or change what an existing one may see: its grants (replacing the old "cameras" and
+	 * "animals_only" settings) and whether its people may only look. Its members stay.
+	 */
+	void saveAccount(String id, boolean viewOnly, List<Access.Grant> grants);
+
+	/** Delete a group. Refused while it has members or a device belongs to it. */
+	void deleteAccount(String id);
+
+	/** Replace the list of homes (which cameras are in which home). */
+	void saveHomes(List<Home> homes);
+
+	/** The admins' emails. */
+	List<String> admins();
+
+	/** The devices (cameras and scripts), without their keys. */
+	List<Device> devices();
+
 	/** How many devices and accounts are configured, for health and startup logs. */
 	String summary();
 }

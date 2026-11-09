@@ -532,6 +532,38 @@ public class PimasterApplication extends WebSecurityConfigurerAdapter {
     	return(false);
     }
 
+	// For the admin page: what a group with these grants would see, per camera: {"ready": true, "cameras":
+	// [{"camera": "pet_door", "total": 4780, "visible": 2900}]}. Counted from the label index in memory (nothing
+	// is read from disk), so it is cheap; until the index is built, ready is false and the counts are partial.
+	// Admins only (AuthFilter guards /auth/admin/**).
+	@PostMapping("/auth/admin/preview")
+	@SuppressWarnings("unchecked")
+	public Map<String,Object> previewAccess(@RequestBody Map<String,Object> body) {
+		List<com.mckellar.pimaster.piexp.auth.Access.Grant> grants = new ArrayList<>();
+		try {
+			Object gs = body == null ? null : body.get("grants");
+			for (Object g : gs instanceof List ? (List<Object>)gs : List.of())
+				grants.add(com.mckellar.pimaster.piexp.auth.Access.Grant.fromMap((Map<String,Object>)g));
+		}
+		catch (IllegalArgumentException | ClassCastException e) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+		}
+		com.mckellar.pimaster.piexp.auth.Access access = new com.mckellar.pimaster.piexp.auth.Access(grants, accessStore::homeOf);
+		List<Map<String,Object>> cameras = new ArrayList<>();
+		LabelIndex index = labelIndex();
+		for (Map.Entry<String,int[]> e : index.count(access::mayView).entrySet()) {
+			Map<String,Object> c = new LinkedHashMap<>();
+			c.put("camera", e.getKey());
+			c.put("total", e.getValue()[0]);
+			c.put("visible", e.getValue()[1]);
+			cameras.add(c);
+		}
+		Map<String,Object> result = new LinkedHashMap<>();
+		result.put("ready", index.isReady());
+		result.put("cameras", cameras);
+		return(result);
+	}
+
 	@RequestMapping("/catcam/megroups")
     public List<MeGroup> GetMeGroups(HttpServletRequest request) throws IOException  {
         Log.info("/catcam/megroups");

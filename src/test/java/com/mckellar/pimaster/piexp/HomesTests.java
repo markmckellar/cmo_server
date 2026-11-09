@@ -167,4 +167,65 @@ class HomesTests {
 				.andExpect(jsonPath("$.accounts[?(@.id == 'us')].summary").value("Home Our house: all clips"))
 				.andExpect(jsonPath("$.homes[*].id", containsInAnyOrder("ours", "grandma")));
 	}
+
+	org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder admin(Cookie c, String url, String json) {
+		return post(url).cookie(c).contentType(MediaType.APPLICATION_JSON).content(json);
+	}
+
+	@Test
+	void theAdminMakesAGroupForOnePersonAndMovesThemIntoIt() throws Exception {
+		Cookie boss = signIn("boss");
+		sees(boss, ev("0001"), ev("0002"), ev("0003"), ev("0004"), ev("0005"), ev("0006"));    // so the label index has them all
+		// only cats, no people, on the pet door; view only
+		String kid = "{\"id\": \"kid\", \"view_only\": true, \"grants\": [{\"level\": \"camera\", \"id\": \"pet_door\", \"show\": [\"cat\"], \"hide\": [\"person\"]}]}";
+		mvc.perform(admin(boss, "/auth/admin/preview", kid)).andExpect(status().isOk())
+				.andExpect(jsonPath("$.cameras[?(@.camera == 'pet_door')].total").value(org.hamcrest.Matchers.contains(2)))
+				.andExpect(jsonPath("$.cameras[?(@.camera == 'pet_door')].visible").value(org.hamcrest.Matchers.contains(1)))
+				.andExpect(jsonPath("$.cameras[?(@.camera == 'her_porch')].visible").value(org.hamcrest.Matchers.contains(0)));
+		mvc.perform(admin(boss, "/auth/admin/account", kid)).andExpect(status().isOk());
+		mvc.perform(admin(boss, "/auth/admin/approve", "{\"email\": \"nb@example.com\", \"account\": \"kid\"}")).andExpect(status().isOk());
+		Cookie nb = signIn("nb");
+		sees(nb, ev("0001"));
+		mvc.perform(get("/auth/config").cookie(nb)).andExpect(jsonPath("$.view_only").value(true))
+				.andExpect(jsonPath("$.access").value("Pet door: cats; no people"));
+		mvc.perform(get("/auth/admin/requests").cookie(boss))
+				.andExpect(jsonPath("$.accounts[?(@.id == 'kid')].grants[0].show[0]").value(org.hamcrest.Matchers.contains("cat")))
+				.andExpect(jsonPath("$.accounts[?(@.id == 'kid')].members[0]").value(org.hamcrest.Matchers.contains("nb@example.com")));
+		// widen it to every camera: the change applies at once, with the same cookie
+		mvc.perform(admin(boss, "/auth/admin/account", "{\"id\": \"kid\", \"grants\": [{\"level\": \"world\", \"show\": [\"cat\", \"dog\"], \"hide\": [\"person\"]}]}"))
+				.andExpect(status().isOk());
+		sees(nb, ev("0001"), ev("0004"));
+		// a group with people in it can't be deleted; an empty one can
+		mvc.perform(admin(boss, "/auth/admin/account/delete", "{\"id\": \"kid\"}")).andExpect(status().isBadRequest());
+		mvc.perform(admin(boss, "/auth/admin/account/delete", "{\"id\": \"broken\"}")).andExpect(status().isBadRequest());    // oops is in it
+		mvc.perform(admin(boss, "/auth/admin/reject", "{\"email\": \"oops@example.com\"}")).andExpect(status().isOk());
+		mvc.perform(admin(boss, "/auth/admin/account/delete", "{\"id\": \"broken\"}")).andExpect(status().isOk());
+	}
+
+	@Test
+	void badGroupsAndHomesAreRefused() throws Exception {
+		Cookie boss = signIn("boss");
+		for (String bad : new String[] {
+				"{\"id\": \"../x\", \"grants\": []}",
+				"{\"id\": \"x\", \"grants\": [{\"level\": \"camera\"}]}",
+				"{\"id\": \"x\", \"grants\": [{\"level\": \"planet\"}]}",
+				"{\"id\": \"x\", \"grants\": [{\"level\": \"world\", \"show\": []}]}",
+				"{\"id\": \"x\", \"grants\": [{\"level\": \"world\", \"hide\": [\"a b\"]}]}"})
+			mvc.perform(admin(boss, "/auth/admin/account", bad)).andExpect(status().isBadRequest());
+		mvc.perform(admin(boss, "/auth/admin/approve", "{\"email\": \"not-an-email\", \"account\": \"us\"}")).andExpect(status().isBadRequest());
+		mvc.perform(admin(boss, "/auth/admin/homes", "{\"homes\": [{\"id\": \"a\", \"cameras\": [\"pet_door\"]}, {\"id\": \"b\", \"cameras\": [\"pet_door\"]}]}"))
+				.andExpect(status().isBadRequest());
+		// only admins
+		Cookie me = signIn("me");
+		mvc.perform(admin(me, "/auth/admin/account", "{\"id\": \"x\", \"grants\": [{\"level\": \"world\"}]}")).andExpect(status().isForbidden());
+		mvc.perform(admin(me, "/auth/admin/preview", "{\"grants\": []}")).andExpect(status().isForbidden());
+	}
+
+	@Test
+	void theAdminMovesACameraToAnotherHome() throws Exception {
+		Cookie boss = signIn("boss");
+		mvc.perform(admin(boss, "/auth/admin/homes", "{\"homes\": [{\"id\": \"ours\", \"name\": \"Our house\", \"cameras\": [\"pet_door\", \"porch_cam\", \"new_cam\"]},"
+				+ " {\"id\": \"grandma\", \"name\": \"Grandma's\", \"cameras\": [\"her_porch\"]}]}")).andExpect(status().isOk());
+		sees(signIn("me"), ev("0001"), ev("0002"), ev("0003"), ev("0006"));
+	}
 }
